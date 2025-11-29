@@ -68,6 +68,20 @@ section { flex: 1; overflow-y: auto; padding: 15px; }
 .fa-folder-plus { color: #ffd700; }
 .fa-upload { color: #00d4ff; }
 
+/* Features "New" button */
+.feat-new-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.9rem;
+}
+.feat-new-btn i { color: var(--accent); }
+
 /* LIST ITEMS */
 .list-item {
     display: flex; justify-content: space-between; align-items: center;
