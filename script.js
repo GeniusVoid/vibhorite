@@ -8,10 +8,8 @@ let editingPath = "";
 // ---------- HELPERS ----------
 function safeDecodeBase64(str) {
     try {
-        // for UTF-8 text saved via safeEncodeBase64
         return decodeURIComponent(escape(atob(str)));
     } catch (e) {
-        // fallback ASCII
         return atob(str);
     }
 }
@@ -116,7 +114,7 @@ function fetchPath(path) {
             return;
         }
 
-        // File vs directory
+        // If backend returned a file instead of directory
         if (!Array.isArray(data)) {
             if (data.content) {
                 fetchFile(currentPath);
@@ -138,9 +136,9 @@ function fetchPath(path) {
                 ? `fetchPath('${item.path}')`
                 : `fetchFile('${item.path}')`;
 
-            // actions: download (files only) + delete
+            // actions: download (files only, except webpass.txt) + delete
             let actionsHtml = "";
-            if (item.type !== "dir") {
+            if (item.type !== "dir" && !item.name.includes('webpass.txt')) {
                 actionsHtml += `
                     <i class="fas fa-download"
                        onclick="event.stopPropagation(); downloadItem('${item.path}', '${item.name}')"></i>`;
@@ -183,7 +181,7 @@ function fetchFile(path) {
     .then(data => {
         if (!data.content) return;
         const content = safeDecodeBase64(data.content);
-        openEditor(data.name, content, data.sha);
+        openEditor(path, content, data.sha);
     });
 }
 
@@ -286,19 +284,28 @@ function createFolderPrompt() {
 function createFilePrompt() {
     const name = prompt("New File Name (e.g. notes.txt):");
     if (!name) return;
-    openEditor(name, "", null);
+    const path = currentPath ? `${currentPath}/${name}` : name;
+    openEditor(path, "", null);
 }
 
-// New: manual full-path file creation
+// Manual full-path file creation (you type code then save)
 function createFileWithPathPrompt() {
-    const fullPath = prompt("New File Full Path (e.g. folder/sub/file.txt):");
+    let fullPath = prompt("New File Full Path (e.g. folder/sub/file.txt):");
+    if (!fullPath) return;
+    fullPath = fullPath.trim();
     if (!fullPath) return;
 
-    const parts = fullPath.split('/');
-    const name = parts[parts.length - 1] || 'untitled';
+    // If not absolute and we’re inside some folder, make it relative to currentPath
+    if (!fullPath.startsWith('/') && currentPath) {
+        fullPath = currentPath + '/' + fullPath;
+    }
 
-    openEditor(name, "", null);
-    editingPath = fullPath;
+    // Normalise: remove starting '/'
+    if (fullPath.startsWith('/')) {
+        fullPath = fullPath.slice(1);
+    }
+
+    openEditor(fullPath, "", null);
 }
 
 function uploadToRepo(path, contentBase64, sha = null, options = {}) {
@@ -325,9 +332,11 @@ function uploadToRepo(path, contentBase64, sha = null, options = {}) {
 }
 
 // ---------- EDITOR ----------
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
+function openEditor(path, content, sha) {
+    editingPath = path;           // full path relative to repo root
     currentSha = sha;
+    const name = path.split('/').pop() || path;
+
     document.getElementById('editor-filename').innerText = name;
     document.getElementById('code-editor').value = content;
     document.getElementById('editor-modal').style.display = 'flex';
