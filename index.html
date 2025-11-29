@@ -9,6 +9,7 @@
 </head>
 <body>
 
+    <!-- LOGIN SCREEN -->
     <div id="login-overlay">
         <div class="login-box">
             <h2>vibhorite</h2>
@@ -19,27 +20,31 @@
         </div>
     </div>
 
+    <!-- MAIN APP -->
     <div id="app-container" style="display:none;">
         <header>
             <h1 class="rainbow-text">vibhorite</h1>
             <button class="logout-btn" onclick="logout()"><i class="fas fa-lock"></i></button>
         </header>
 
+        <!-- NAVIGATION -->
         <nav>
             <button class="nav-btn active" onclick="switchTab('db')">Database</button>
             <button class="nav-btn" onclick="switchTab('feat')">Features</button>
         </nav>
 
+        <!-- DATABASE SECTION -->
         <section id="db-section">
             <div class="toolbar">
-                <div class="left-tools">
+                <div class="path-box">
                     <button onclick="fetchPath('')"><i class="fas fa-home"></i></button>
                     <span id="current-path">/</span>
                 </div>
+                
                 <div class="actions">
-                    <button onclick="createFilePrompt()"><i class="fas fa-file-circle-plus"></i></button>
-                    <button onclick="createFolderPrompt()"><i class="fas fa-folder-plus"></i></button>
-                    <button onclick="document.getElementById('file-upload').click()"><i class="fas fa-file-upload"></i></button>
+                    <button onclick="createFilePrompt()" title="New File"><i class="fas fa-file-medical"></i></button>
+                    <button onclick="createFolderPrompt()" title="New Folder"><i class="fas fa-folder-plus"></i></button>
+                    <button onclick="document.getElementById('file-upload').click()" title="Upload"><i class="fas fa-upload"></i></button>
                 </div>
             </div>
             <input type="file" id="file-upload" hidden onchange="handleFileUpload(this)">
@@ -47,14 +52,16 @@
             <div id="file-list" class="list-view"></div>
         </section>
 
+        <!-- FEATURES SECTION -->
         <section id="feat-section" style="display:none;">
             <div class="toolbar">
-                <span>Installed Features</span>
+                <span>Features</span>
                 <button onclick="createFeaturePrompt()"><i class="fas fa-plus-circle"></i> New</button>
             </div>
             <div id="feature-list" class="grid-view"></div>
         </section>
         
+        <!-- FEATURE VIEWER -->
         <div id="feature-viewer" style="display:none;">
             <div class="viewer-header">
                 <button onclick="closeFeature()">Close</button>
@@ -64,6 +71,7 @@
         </div>
     </div>
 
+    <!-- EDIT MODAL -->
     <div id="editor-modal" style="display:none;">
         <div class="editor-header">
             <span id="editor-filename">Editing...</span>
@@ -72,7 +80,7 @@
                 <button onclick="saveFile()" class="save-btn">Save</button>
             </div>
         </div>
-        <textarea id="code-editor" spellcheck="false" placeholder="Start typing..."></textarea>
+        <textarea id="code-editor" spellcheck="false" placeholder="Write code here..."></textarea>
     </div>
 
     <script src="script.js"></script>
