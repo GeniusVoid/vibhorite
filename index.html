@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibhorite</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2>vibhorite</h2>
+            <p>Access Restricted</p>
+            <input type="password" id="pass-input" placeholder="Enter PIN" inputmode="numeric">
+            <button onclick="attemptLogin()">Unlock</button>
+            <p id="login-msg"></p>
+        </div>
+    </div>
+
+    <div id="app-container" style="display:none;">
+        <header>
+            <h1 class="rainbow-text">vibhorite</h1>
+            <button class="logout-btn" onclick="logout()"><i class="fas fa-lock"></i></button>
+        </header>
+
+        <nav>
+            <button class="nav-btn active" onclick="switchTab('db')">Database</button>
+            <button class="nav-btn" onclick="switchTab('feat')">Features</button>
+        </nav>
+
+        <section id="db-section">
+            <div class="toolbar">
+                <button onclick="fetchPath('')"><i class="fas fa-home"></i></button>
+                <span id="current-path">/</span>
+                <div class="actions">
+                    <button onclick="createFolderPrompt()"><i class="fas fa-folder-plus"></i></button>
+                    <button onclick="document.getElementById('file-upload').click()"><i class="fas fa-file-upload"></i></button>
+                </div>
+            </div>
+            <input type="file" id="file-upload" hidden onchange="handleFileUpload(this)">
+            
+            <div id="file-list" class="list-view"></div>
+        </section>
+
+        <section id="feat-section" style="display:none;">
+            <div class="toolbar">
+                <span>Installed Features</span>
+                <button onclick="createFeaturePrompt()"><i class="fas fa-plus-circle"></i> New</button>
+            </div>
+            <div id="feature-list" class="grid-view"></div>
+        </section>
+        
+        <div id="feature-viewer" style="display:none;">
+            <div class="viewer-header">
+                <button onclick="closeFeature()">Close</button>
+                <span id="feat-title">App</span>
+            </div>
+            <iframe id="app-frame"></iframe>
+        </div>
+    </div>
+
+    <div id="editor-modal" style="display:none;">
+        <div class="editor-header">
+            <span id="editor-filename">Editing...</span>
+            <div class="editor-actions">
+                <button onclick="closeEditor()">Cancel</button>
+                <button onclick="saveFile()" class="save-btn">Save</button>
+            </div>
+        </div>
+        <textarea id="code-editor" spellcheck="false"></textarea>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
