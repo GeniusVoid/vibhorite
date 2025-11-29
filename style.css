@@ -19,7 +19,6 @@ body { background: var(--bg); color: var(--text); height: 100vh; overflow: hidde
     animation: rainbow 10s linear infinite;
     font-size: 1.8rem;
     font-weight: 800;
-    letter-spacing: 1px;
 }
 @keyframes rainbow { 0% {background-position: 0% 50%;} 100% {background-position: 100% 50%;} }
 
@@ -40,10 +39,10 @@ body { background: var(--bg); color: var(--text); height: 100vh; overflow: hidde
 }
 #login-msg { margin-top: 15px; color: #ff4444; font-size: 0.9rem; }
 
-/* APP STRUCTURE */
+/* LAYOUT */
 #app-container { height: 100%; display: flex; flex-direction: column; }
-header { padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; background: var(--card); border-bottom: 1px solid var(--border); }
-.logout-btn { background: none; border: none; color: #666; font-size: 1.2rem; cursor: pointer; }
+header { padding: 15px; display: flex; justify-content: space-between; align-items: center; background: var(--card); border-bottom: 1px solid var(--border); }
+.logout-btn { background: none; border: none; color: #666; font-size: 1.2rem; }
 
 nav { display: flex; background: #000; border-bottom: 1px solid var(--border); }
 .nav-btn {
@@ -54,38 +53,43 @@ nav { display: flex; background: #000; border-bottom: 1px solid var(--border); }
 
 section { flex: 1; overflow-y: auto; padding: 15px; }
 
-/* DB TOOLBAR */
+/* TOOLBAR */
 .toolbar { 
     display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; 
-    background: var(--card); padding: 12px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card); padding: 10px; border-radius: 10px; border: 1px solid var(--border);
 }
-.toolbar button { background: none; border: none; color: var(--text); font-size: 1.3rem; margin-left: 15px; cursor: pointer; }
-#current-path { color: #888; font-family: monospace; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.path-box { display: flex; align-items: center; overflow: hidden; max-width: 50%; }
+.path-box button { background: none; border: none; color: var(--text); font-size: 1.2rem; margin-right: 10px; }
+#current-path { color: #888; font-family: monospace; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.actions { display: flex; gap: 15px; }
+.actions button { background: none; border: none; color: var(--text); font-size: 1.2rem; cursor: pointer; }
+.fa-file-medical { color: #00ff88; }
+.fa-folder-plus { color: #ffd700; }
+.fa-upload { color: #00d4ff; }
 
 /* LIST ITEMS */
 .list-item {
     display: flex; justify-content: space-between; align-items: center;
     padding: 18px; background: var(--card); margin-bottom: 10px; border-radius: 10px;
-    border: 1px solid transparent; transition: 0.2s;
+    border: 1px solid transparent;
 }
 .list-item:active { background: #25252a; }
 .item-name { display: flex; align-items: center; gap: 15px; font-size: 1rem; overflow: hidden; }
-.item-actions i { margin-left: 15px; color: #ff4444; cursor: pointer; opacity: 0.7; }
-.fa-folder { color: #ffd700; font-size: 1.2rem; }
-.fa-file-code { color: #00d4ff; font-size: 1.2rem; }
+.item-actions i { margin-left: 15px; color: #ff4444; opacity: 0.7; cursor: pointer; }
+.fa-folder { color: #ffd700; }
+.fa-file-code { color: #00d4ff; }
 .fa-level-up-alt { color: var(--accent); }
 
 /* FEATURES GRID */
 .grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 15px; }
 .feature-card {
     background: var(--card); padding: 20px; text-align: center; border-radius: 12px; 
-    border: 1px solid var(--border); transition: 0.2s; cursor: pointer;
+    border: 1px solid var(--border);
 }
-.feature-card:active { transform: scale(0.95); }
 .feature-icon { font-size: 2rem; margin-bottom: 10px; color: var(--accent); }
-.feature-card h3 { font-size: 0.9rem; font-weight: normal; color: #ccc; }
 
-/* VIEWER & EDITOR */
+/* EDITOR / VIEWER */
 #feature-viewer, #editor-modal {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
     background: var(--bg); z-index: 100; display: flex; flex-direction: column;
@@ -94,22 +98,12 @@ section { flex: 1; overflow-y: auto; padding: 15px; }
     padding: 10px 15px; background: #000; display: flex; justify-content: space-between; 
     align-items: center; border-bottom: 1px solid var(--border);
 }
+.save-btn { background: var(--accent) !important; color: #000 !important; font-weight: bold; padding: 5px 15px; border-radius: 5px; border: none; }
 .viewer-header button, .editor-actions button {
-    background: #333; color: #fff; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer;
+    background: #333; color: #fff; border: none; padding: 8px 15px; border-radius: 5px; margin-left: 5px;
 }
-.save-btn { background: var(--accent) !important; color: #000 !important; font-weight: bold; }
 #app-frame { flex: 1; border: none; background: #fff; }
 #code-editor { 
     flex: 1; background: #1a1a1d; color: #a9b7c6; padding: 15px; 
     font-family: 'Courier New', monospace; font-size: 14px; border: none; outline: none; line-height: 1.5;
 }
-#editor-filename { color: var(--accent); font-weight: bold; }
-#code-editor { 
-    flex: 1; background: #1a1a1d; color: #a9b7c6; padding: 15px; 
-    font-family: 'Courier New', monospace; font-size: 14px; border: none; outline: none; line-height: 1.5;
-}
-    flex: 1; background: #1a1a1d; color: #a9b7c6; padding: 15px; 
-    font-family: 'Courier New', monospace; font-size: 14px; border: none; outline: none; line-height: 1.5;
-}
-#editor-filename { color: var(--accent); font-weight: bold; }
-#editor-filename { color: var(--accent); font-weight: bold; }
