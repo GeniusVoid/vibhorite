@@ -4,7 +4,10 @@ let currentPath = "";
 let sessionPass = null;
 let currentSha = null;
 let editingPath = "";
-let spaceMode = "public"; // "public" or "private"
+
+// private-space state
+let privateUnlocked = false;
+let hidePassCache = null;
 
 // upload progress state
 let uploadInProgress = false;
@@ -56,7 +59,46 @@ function stepUpload() {
     }
 }
 
-// ---------- AUTH / SPACE SELECTION ----------
+// hidepass loader
+function getHidePass() {
+    if (hidePassCache !== null) return Promise.resolve(hidePassCache);
+
+    return fetch(API_URL + "/hidepass.txt", {
+        headers: { "x-password": sessionPass }
+    })
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+            if (data && data.content) {
+                hidePassCache = safeDecodeBase64(data.content).trim();
+            } else {
+                hidePassCache = "";
+            }
+            return hidePassCache;
+        })
+        .catch(() => {
+            hidePassCache = "";
+            return hidePassCache;
+        });
+}
+
+function promptPrivate(path) {
+    getHidePass().then(realPass => {
+        if (!realPass) {
+            alert("Private password not set.");
+            return;
+        }
+        const input = prompt("Enter private password:");
+        if (input === null) return;
+        if (input.trim() === realPass) {
+            privateUnlocked = true;
+            fetchPath(path);
+        } else {
+            alert("Wrong private password.");
+        }
+    });
+}
+
+// ---------- AUTH ----------
 function attemptLogin() {
     const input = document.getElementById("pass-input");
     const btn = document.querySelector(".login-box button");
@@ -77,79 +119,26 @@ function attemptLogin() {
     })
         .then(res => res.json())
         .then(data => {
-            if (!data.success) {
+            if (data.success) {
+                sessionPass = pass;
+                document.getElementById("login-overlay").style.display = "none";
+                document.getElementById("app-container").style.display = "flex";
+                currentPath = "";
+                privateUnlocked = false;
+                hidePassCache = null;
+                fetchPath("");
+            } else {
                 msg.innerText = "Wrong Password";
                 btn.innerText = "Unlock";
                 btn.disabled = false;
                 input.value = "";
-                return;
             }
-
-            sessionPass = pass;
-
-            // decide whether this is public or private pass
-            determineSpace(pass)
-                .then(mode => {
-                    if (mode === "public") {
-                        spaceMode = "public";
-                        currentPath = "";
-                    } else if (mode === "private") {
-                        spaceMode = "private";
-                        currentPath = "private";
-                    } else {
-                        msg.innerText = "Wrong Password";
-                        btn.innerText = "Unlock";
-                        btn.disabled = false;
-                        input.value = "";
-                        return;
-                    }
-
-                    document.getElementById("login-overlay").style.display = "none";
-                    document.getElementById("app-container").style.display = "flex";
-                    fetchPath(currentPath);
-                })
-                .catch(() => {
-                    msg.innerText = "Error";
-                    btn.innerText = "Unlock";
-                    btn.disabled = false;
-                });
         })
         .catch(() => {
             msg.innerText = "Connection Error";
             btn.innerText = "Unlock";
             btn.disabled = false;
         });
-}
-
-// read webpass.txt & hidepass.txt and decide mode
-function determineSpace(pass) {
-    const reqWeb = fetch(API_URL + "/webpass.txt", {
-        headers: { "x-password": pass }
-    })
-        .then(res => (res.ok ? res.json() : null))
-        .catch(() => null);
-
-    const reqHide = fetch(API_URL + "/hidepass.txt", {
-        headers: { "x-password": pass }
-    })
-        .then(res => (res.ok ? res.json() : null))
-        .catch(() => null);
-
-    return Promise.all([reqWeb, reqHide]).then(([webData, hideData]) => {
-        let webPass = null,
-            hidePass = null;
-        if (webData && webData.content) webPass = safeDecodeBase64(webData.content).trim();
-        if (hideData && hideData.content) hidePass = safeDecodeBase64(hideData.content).trim();
-
-        if (webPass && pass === webPass) return "public";
-        if (hidePass && pass === hidePass) return "private";
-
-        // fallback: if only one exists
-        if (!webPass && hidePass && pass === hidePass) return "private";
-        if (!hidePass && webPass && pass === webPass) return "public";
-
-        return "unknown";
-    });
 }
 
 function logout() {
@@ -191,15 +180,12 @@ function fetchPath(path) {
 
             if (currentPath !== "") {
                 const parent = currentPath.split("/").slice(0, -1).join("/");
-                const showParent = !(spaceMode === "private" && currentPath === "private");
-                if (showParent) {
-                    list.innerHTML += `
+                list.innerHTML += `
                 <div class="list-item" onclick="fetchPath('${parent}')">
                     <div class="item-name">
                         <i class="fas fa-level-up-alt"></i> ..
                     </div>
                 </div>`;
-                }
             }
 
             if (data.error) {
@@ -223,21 +209,19 @@ function fetchPath(path) {
             }
 
             data.forEach(item => {
-                // hide private folder in normal mode at root
-                if (
-                    spaceMode === "public" &&
-                    currentPath === "" &&
-                    item.type === "dir" &&
-                    item.name === "private"
-                ) {
-                    return;
-                }
+                const isPrivateRoot =
+                    item.type === "dir" && item.name === "private" && currentPath === "";
 
                 const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-                const clickAction =
-                    item.type === "dir"
-                        ? `fetchPath('${item.path}')`
-                        : `fetchFile('${item.path}')`;
+                let clickAction;
+
+                if (isPrivateRoot && !privateUnlocked) {
+                    clickAction = `promptPrivate('${item.path}')`;
+                } else if (item.type === "dir") {
+                    clickAction = `fetchPath('${item.path}')`;
+                } else {
+                    clickAction = `fetchFile('${item.path}')`;
+                }
 
                 let actionsHtml = "";
                 if (
