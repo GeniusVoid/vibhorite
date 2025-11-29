@@ -1,4 +1,5 @@
 // CONFIGURATION
+// MAKE SURE THIS URL IS CORRECT
 const API_URL = "https://backend-server.vibtech0.workers.dev";
 let currentPath = "";
 let sessionPass = null;
@@ -10,32 +11,29 @@ function attemptLogin() {
     const btn = document.querySelector('.login-box button');
     const msg = document.getElementById('login-msg');
     
-    // Trim removes accidental spaces
+    // Trim removes accidental spaces from mobile keyboard
     const pass = input.value.trim();
     
     if (!pass) {
-        msg.innerText = "Please enter a password";
+        msg.innerText = "Please enter a PIN";
         return;
     }
     
-    // Visual Feedback
+    // UI Feedback
     msg.innerText = "";
-    btn.innerText = "Checking...";
+    btn.innerText = "Verifying...";
     btn.disabled = true;
     
     fetch(API_URL + "/verify", {
         headers: { "x-password": pass }
     })
-    .then(res => {
-        if (!res.ok) throw new Error("Backend Error: " + res.status);
-        return res.json();
-    })
+    .then(res => res.json())
     .then(data => {
         if (data.success) {
             sessionPass = pass;
             document.getElementById('login-overlay').style.display = "none";
             document.getElementById('app-container').style.display = "flex";
-            // Start loading files
+            // Load the database files
             fetchPath(''); 
         } else {
             msg.innerText = "Wrong Password";
@@ -45,8 +43,8 @@ function attemptLogin() {
         }
     })
     .catch(err => {
-        alert("Login Failed: " + err.message);
-        msg.innerText = "Connection Error";
+        alert("Connection Failed. Check your internet or Backend URL.");
+        msg.innerText = "Error";
         btn.innerText = "Unlock";
         btn.disabled = false;
     });
@@ -54,19 +52,17 @@ function attemptLogin() {
 
 function logout() { location.reload(); }
 
+// --- TABS ---
 function switchTab(tab) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('section').forEach(s => s.style.display = 'none');
     
-    // Simple ID based switching
     if (tab === 'db') {
         document.getElementById('db-section').style.display = 'block';
-        // highlight the first button
         document.querySelectorAll('.nav-btn')[0].classList.add('active');
         fetchPath(currentPath || '');
     } else {
         document.getElementById('feat-section').style.display = 'block';
-        // highlight the second button
         document.querySelectorAll('.nav-btn')[1].classList.add('active');
         loadFeatures();
     }
@@ -89,20 +85,186 @@ function fetchPath(path) {
         const list = document.getElementById('file-list');
         list.innerHTML = "";
         
-        // Handle Back Button
+        // Add Back Button if inside a folder
         if (path !== "") {
             const parent = path.split('/').slice(0, -1).join('/');
             list.innerHTML += `<div class="list-item" onclick="fetchPath('${parent}')"><div class="item-name"><i class="fas fa-level-up-alt"></i> ..</div></div>`;
         }
 
-        // 1. Handle Error Response (Safety Check)
+        // --- SAFETY CHECK 1: Is it an Error? ---
         if (data.error) {
-            list.innerHTML = `<p style="color:red; text-align:center;">Error: ${data.error}</p>`;
+            alert("Server Error: " + data.error);
+            list.innerHTML = `<p style="text-align:center; color:red;">Unauthorized</p>`;
             return;
         }
 
-        // 2. Handle File (Open Editor)
+        // --- SAFETY CHECK 2: Is it a File (Not a list)? ---
         if (!Array.isArray(data)) {
+            // It's a file, open the editor
+            if(data.content) {
+               openEditor(data.name, atob(data.content), data.sha);
+               // Visually step back to the folder so we don't get stuck
+               const parent = path.split('/').slice(0, -1).join('/');
+               currentPath = parent;
+               document.getElementById('current-path').innerText = parent || '/';
+            }
+            return;
+        }
+
+        // --- SAFETY CHECK 3: NOW we can filter ---
+        // Only run filter because we KNOW it is an array now
+        const safeData = data.filter(item => item.name !== 'webpass.txt');
+
+        // Sort: Folders first
+        safeData.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
+
+        if (safeData.length === 0) {
+            list.innerHTML += '<p style="text-align:center; color:#444; margin-top:10px;">Empty Folder</p>';
+        }
+
+        safeData.forEach(item => {
+            const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
+            const clickAction = item.type === "dir" ? `fetchPath('${item.path}')` : `fetchFile('${item.path}')`;
+            
+            list.innerHTML += `
+            <div class="list-item" onclick="${clickAction}">
+                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
+                <div class="item-actions">
+                    <i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>
+                </div>
+            </div>`;
+        });
+    })
+    .catch(err => {
+        console.error(err);
+        document.getElementById('file-list').innerHTML = `<p style="text-align:center; color:red;">Connection Error</p>`;
+    });
+}
+
+function fetchFile(path) {
+    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        openEditor(data.name, atob(data.content), data.sha);
+    });
+}
+
+function deleteItem(path, sha) {
+    if(!confirm("Delete this?")) return;
+    fetch(API_URL + "/" + path, {
+        method: "DELETE",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ sha: sha })
+    }).then(() => fetchPath(currentPath));
+}
+
+// --- FILE OPERATIONS ---
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result.split(',')[1]; 
+        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
+        uploadToRepo(path, content);
+    };
+    reader.readAsDataURL(file);
+    input.value = ''; 
+}
+
+function createFolderPrompt() {
+    const name = prompt("Folder Name:");
+    if (!name) return;
+    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
+    uploadToRepo(path, btoa("placeholder"));
+}
+
+function createFilePrompt() {
+    const name = prompt("New File Name (e.g. notes.txt):");
+    if (!name) return;
+    openEditor(name, "", null);
+}
+
+function uploadToRepo(path, contentBase64, sha=null) {
+    fetch(API_URL + "/" + path, {
+        method: "PUT",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: contentBase64, sha: sha })
+    }).then(res => {
+        if(res.ok) {
+            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
+            fetchPath(currentPath);
+        } else {
+            alert("Failed. Check connection.");
+        }
+    });
+}
+
+// --- EDITOR ---
+let editingPath = "";
+function openEditor(name, content, sha) {
+    editingPath = currentPath ? `${currentPath}/${name}` : name;
+    currentSha = sha;
+    document.getElementById('editor-filename').innerText = name;
+    document.getElementById('code-editor').value = content;
+    document.getElementById('editor-modal').style.display = 'flex';
+}
+
+function closeEditor() {
+    document.getElementById('editor-modal').style.display = 'none';
+    document.getElementById('code-editor').value = "";
+}
+
+function saveFile() {
+    const content = document.getElementById('code-editor').value;
+    const base64Content = btoa(unescape(encodeURIComponent(content))); 
+    uploadToRepo(editingPath, base64Content, currentSha);
+}
+
+// --- FEATURES ---
+function loadFeatures() {
+    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        const list = document.getElementById('feature-list');
+        list.innerHTML = "";
+        if (!Array.isArray(data)) {
+            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
+            return;
+        }
+        data.forEach(item => {
+            if(item.type === "dir") {
+                list.innerHTML += `
+                <div class="feature-card" onclick="runFeature('${item.name}')">
+                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
+                    <h3>${item.name}</h3>
+                </div>`;
+            }
+        });
+    });
+}
+
+function createFeaturePrompt() {
+    const name = prompt("Feature Name:");
+    if (!name) return;
+    const html = `<h1>${name}</h1>`;
+    uploadToRepo(`features/${name}/index.html`, btoa(html));
+}
+
+function runFeature(name) {
+    document.getElementById('feature-viewer').style.display = "flex";
+    document.getElementById('feat-title').innerText = name;
+    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        if(data.content) document.getElementById('app-frame').srcdoc = atob(data.content);
+    });
+}
+
+function closeFeature() {
+    document.getElementById('feature-viewer').style.display = "none";
+    document.getElementById('app-frame').srcdoc = "";
+}
             if(data.content) {
                openEditor(data.name, atob(data.content), data.sha);
                // Go back to parent folder visually
