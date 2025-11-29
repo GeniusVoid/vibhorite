@@ -32,9 +32,12 @@
 
         <section id="db-section">
             <div class="toolbar">
-                <button onclick="fetchPath('')"><i class="fas fa-home"></i></button>
-                <span id="current-path">/</span>
+                <div class="left-tools">
+                    <button onclick="fetchPath('')"><i class="fas fa-home"></i></button>
+                    <span id="current-path">/</span>
+                </div>
                 <div class="actions">
+                    <button onclick="createFilePrompt()"><i class="fas fa-file-circle-plus"></i></button>
                     <button onclick="createFolderPrompt()"><i class="fas fa-folder-plus"></i></button>
                     <button onclick="document.getElementById('file-upload').click()"><i class="fas fa-file-upload"></i></button>
                 </div>
@@ -69,7 +72,7 @@
                 <button onclick="saveFile()" class="save-btn">Save</button>
             </div>
         </div>
-        <textarea id="code-editor" spellcheck="false"></textarea>
+        <textarea id="code-editor" spellcheck="false" placeholder="Start typing..."></textarea>
     </div>
 
     <script src="script.js"></script>
