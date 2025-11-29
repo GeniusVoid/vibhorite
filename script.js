@@ -2,52 +2,72 @@
 const API_URL = "https://backend-server.vibtech0.workers.dev";
 let currentPath = "";
 let sessionPass = null;
-let currentSha = null; // For editing
+let currentSha = null;
 
 // --- AUTHENTICATION ---
 function attemptLogin() {
-    const pass = document.getElementById('pass-input').value;
-    if (!pass) return;
-    
+    const input = document.getElementById('pass-input');
+    const btn = document.querySelector('.login-box button');
     const msg = document.getElementById('login-msg');
-    msg.innerText = "Verifying...";
+    
+    // Trim removes accidental spaces
+    const pass = input.value.trim();
+    
+    if (!pass) {
+        msg.innerText = "Please enter a password";
+        return;
+    }
+    
+    // Visual Feedback
+    msg.innerText = "";
+    btn.innerText = "Checking...";
+    btn.disabled = true;
     
     fetch(API_URL + "/verify", {
         headers: { "x-password": pass }
     })
-    .then(res => res.json())
+    .then(res => {
+        if (!res.ok) throw new Error("Backend Error: " + res.status);
+        return res.json();
+    })
     .then(data => {
         if (data.success) {
             sessionPass = pass;
             document.getElementById('login-overlay').style.display = "none";
             document.getElementById('app-container').style.display = "flex";
-            fetchPath(''); // Load root
+            // Start loading files
+            fetchPath(''); 
         } else {
-            msg.innerText = "Access Denied";
-            document.getElementById('pass-input').value = "";
+            msg.innerText = "Wrong Password";
+            btn.innerText = "Unlock";
+            btn.disabled = false;
+            input.value = "";
         }
     })
-    .catch(err => msg.innerText = "Connection Error. Check Backend.");
+    .catch(err => {
+        alert("Login Failed: " + err.message);
+        msg.innerText = "Connection Error";
+        btn.innerText = "Unlock";
+        btn.disabled = false;
+    });
 }
 
-function logout() {
-    location.reload();
-}
+function logout() { location.reload(); }
 
-// --- NAVIGATION ---
 function switchTab(tab) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('section').forEach(s => s.style.display = 'none');
     
+    // Simple ID based switching
     if (tab === 'db') {
         document.getElementById('db-section').style.display = 'block';
-        const btn = document.querySelector(`button[onclick="switchTab('db')"]`);
-        if(btn) btn.classList.add('active');
+        // highlight the first button
+        document.querySelectorAll('.nav-btn')[0].classList.add('active');
         fetchPath(currentPath || '');
     } else {
         document.getElementById('feat-section').style.display = 'block';
-        const btn = document.querySelector(`button[onclick="switchTab('feat')"]`);
-        if(btn) btn.classList.add('active');
+        // highlight the second button
+        document.querySelectorAll('.nav-btn')[1].classList.add('active');
         loadFeatures();
     }
 }
@@ -59,7 +79,6 @@ function fetchPath(path) {
     document.getElementById('current-path').innerText = displayPath;
     document.getElementById('file-list').innerHTML = '<p style="text-align:center; color:#666; margin-top:20px;">Loading...</p>';
 
-    // Fix path formatting for API
     let endpoint = path.startsWith('/') ? path : '/' + path;
 
     fetch(API_URL + endpoint, {
@@ -70,15 +89,23 @@ function fetchPath(path) {
         const list = document.getElementById('file-list');
         list.innerHTML = "";
         
+        // Handle Back Button
         if (path !== "") {
             const parent = path.split('/').slice(0, -1).join('/');
             list.innerHTML += `<div class="list-item" onclick="fetchPath('${parent}')"><div class="item-name"><i class="fas fa-level-up-alt"></i> ..</div></div>`;
         }
 
-        // Handle if it's a file (editor)
+        // 1. Handle Error Response (Safety Check)
+        if (data.error) {
+            list.innerHTML = `<p style="color:red; text-align:center;">Error: ${data.error}</p>`;
+            return;
+        }
+
+        // 2. Handle File (Open Editor)
         if (!Array.isArray(data)) {
             if(data.content) {
                openEditor(data.name, atob(data.content), data.sha);
+               // Go back to parent folder visually
                const parent = path.split('/').slice(0, -1).join('/');
                currentPath = parent;
                document.getElementById('current-path').innerText = parent || '/';
@@ -86,23 +113,159 @@ function fetchPath(path) {
             return;
         }
 
-        // --- FILTERING SENSITIVE FILES ---
-        // This removes webpass.txt from the received list
-        data = data.filter(item => item.name !== 'webpass.txt');
-        // ---------------------------------
+        // 3. Handle Folder List (Apply Filter HERE)
+        // We only filter if we are actually looking at a list
+        let filteredData = data.filter(item => item.name !== 'webpass.txt');
 
         // Sort: Folders first
-        data.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
+        filteredData.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
 
-        data.forEach(item => {
+        if (filteredData.length === 0) {
+            list.innerHTML += '<p style="text-align:center; color:#444; margin-top:10px;">Empty Folder</p>';
+        }
+
+        filteredData.forEach(item => {
             const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-            const clickAction = item.type === "dir" 
-                ? `fetchPath('${item.path}')` 
-                : `fetchFile('${item.path}')`;
+            const clickAction = item.type === "dir" ? `fetchPath('${item.path}')` : `fetchFile('${item.path}')`;
             
-            const deleteBtn = `<i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>`;
-
             list.innerHTML += `
+            <div class="list-item" onclick="${clickAction}">
+                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
+                <div class="item-actions">
+                    <i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>
+                </div>
+            </div>`;
+        });
+    })
+    .catch(err => {
+        document.getElementById('file-list').innerHTML = `<p style="text-align:center; color:red;">Connection Error</p>`;
+    });
+}
+
+function fetchFile(path) {
+    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        openEditor(data.name, atob(data.content), data.sha);
+    });
+}
+
+function deleteItem(path, sha) {
+    if(!confirm("Delete this?")) return;
+    fetch(API_URL + "/" + path, {
+        method: "DELETE",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ sha: sha })
+    }).then(() => fetchPath(currentPath));
+}
+
+// --- FILE OPERATIONS ---
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result.split(',')[1]; 
+        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
+        uploadToRepo(path, content);
+    };
+    reader.readAsDataURL(file);
+    input.value = ''; 
+}
+
+function createFolderPrompt() {
+    const name = prompt("Folder Name:");
+    if (!name) return;
+    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
+    uploadToRepo(path, btoa("placeholder"));
+}
+
+function createFilePrompt() {
+    const name = prompt("New File Name (e.g. todo.txt):");
+    if (!name) return;
+    openEditor(name, "", null);
+}
+
+function uploadToRepo(path, contentBase64, sha=null) {
+    fetch(API_URL + "/" + path, {
+        method: "PUT",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: contentBase64, sha: sha })
+    }).then(res => {
+        if(res.ok) {
+            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
+            fetchPath(currentPath);
+        } else {
+            alert("Failed. Check connection.");
+        }
+    });
+}
+
+// --- EDITOR ---
+let editingPath = "";
+function openEditor(name, content, sha) {
+    editingPath = currentPath ? `${currentPath}/${name}` : name;
+    currentSha = sha;
+    document.getElementById('editor-filename').innerText = name;
+    document.getElementById('code-editor').value = content;
+    document.getElementById('editor-modal').style.display = 'flex';
+}
+
+function closeEditor() {
+    document.getElementById('editor-modal').style.display = 'none';
+    document.getElementById('code-editor').value = "";
+}
+
+function saveFile() {
+    const content = document.getElementById('code-editor').value;
+    const base64Content = btoa(unescape(encodeURIComponent(content))); 
+    uploadToRepo(editingPath, base64Content, currentSha);
+}
+
+// --- FEATURES ---
+function loadFeatures() {
+    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        const list = document.getElementById('feature-list');
+        list.innerHTML = "";
+        if (!Array.isArray(data)) {
+            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
+            return;
+        }
+        data.forEach(item => {
+            if(item.type === "dir") {
+                list.innerHTML += `
+                <div class="feature-card" onclick="runFeature('${item.name}')">
+                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
+                    <h3>${item.name}</h3>
+                </div>`;
+            }
+        });
+    });
+}
+
+function createFeaturePrompt() {
+    const name = prompt("Feature Name:");
+    if (!name) return;
+    const html = `<h1>${name}</h1>`;
+    uploadToRepo(`features/${name}/index.html`, btoa(html));
+}
+
+function runFeature(name) {
+    document.getElementById('feature-viewer').style.display = "flex";
+    document.getElementById('feat-title').innerText = name;
+    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
+    .then(res => res.json())
+    .then(data => {
+        if(data.content) document.getElementById('app-frame').srcdoc = atob(data.content);
+    });
+}
+
+function closeFeature() {
+    document.getElementById('feature-viewer').style.display = "none";
+    document.getElementById('app-frame').srcdoc = "";
+}
             <div class="list-item" onclick="${clickAction}">
                 <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
                 <div class="item-actions">${deleteBtn}</div>
