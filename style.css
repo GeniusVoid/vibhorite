@@ -90,7 +90,11 @@ section { flex: 1; overflow-y: auto; padding: 15px; }
 }
 .list-item:active { background: #25252a; }
 .item-name { display: flex; align-items: center; gap: 15px; font-size: 1rem; overflow: hidden; }
-.item-actions i { margin-left: 15px; color: #ff4444; opacity: 0.7; cursor: pointer; }
+
+.item-actions i { margin-left: 15px; opacity: 0.8; cursor: pointer; }
+.item-actions .fa-download { color: var(--accent); }
+.item-actions .fa-trash { color: #ff4444; }
+
 .fa-folder { color: #ffd700; }
 .fa-file-code { color: #00d4ff; }
 .fa-level-up-alt { color: var(--accent); }
@@ -120,4 +124,35 @@ section { flex: 1; overflow-y: auto; padding: 15px; }
 #code-editor { 
     flex: 1; background: #1a1a1d; color: #a9b7c6; padding: 15px; 
     font-family: 'Courier New', monospace; font-size: 14px; border: none; outline: none; line-height: 1.5;
+}
+
+/* UPLOAD STATUS BAR */
+#upload-status {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.9);
+    display: none;
+    align-items: center;
+    gap: 10px;
+    z-index: 2000;
+}
+#upload-status-text {
+    font-size: 0.8rem;
+    color: #ccc;
+    white-space: nowrap;
+}
+#upload-progress-bar {
+    flex: 1;
+    height: 4px;
+    background: #333;
+    border-radius: 999px;
+    overflow: hidden;
+}
+#upload-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
 }
