@@ -1,5 +1,5 @@
 // CONFIGURATION
-const API_URL = "https://backend-server.vibtech0.workers.dev";
+const API_URL = "https://secure-backend.vibtech0.workers.dev";
 let currentPath = "";
 let sessionPass = null;
 let currentSha = null;
@@ -104,7 +104,7 @@ function getWebPass() {
         });
 }
 
-// secondary security password
+// secondary security password (8-digit dynamic code)
 async function verifyOperationPassword() {
     const [webPass, hidePass] = await Promise.all([getWebPass(), getHidePass()]);
     const first2 = (webPass || "").slice(0, 2);
