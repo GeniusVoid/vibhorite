@@ -2,284 +2,161 @@
 const API_URL = "https://backend-server.vibtech0.workers.dev";
 let currentPath = "";
 let sessionPass = null;
-let currentSha = null; // For editing
+let currentSha = null;
+let editingPath = "";
 
-// --- AUTHENTICATION ---
-function attemptLogin() {
-    const pass = document.getElementById('pass-input').value;
-    if (!pass) return;
-    
+// ---------- HELPERS ----------
+function safeDecodeBase64(str) {
+    try {
+        // for UTF-8 text
+        return decodeURIComponent(escape(atob(str)));
+    } catch (e) {
+        // fallback for plain ASCII
+        return atob(str);
+    }
+}
+
+function safeEncodeBase64(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+}
+
+// ---------- AUTHENTICATION ----------
+async function attemptLogin() {
+    const input = document.getElementById('pass-input');
+    const btn = document.querySelector('.login-box button');
     const msg = document.getElementById('login-msg');
-    msg.innerText = "Verifying...";
-    
-    fetch(API_URL + "/verify", {
-        headers: { "x-password": pass }
-    })
-    .then(res => res.json())
-    .then(data => {
+
+    const pass = input.value.trim();
+    if (!pass) {
+        msg.innerText = "Please enter PIN";
+        return;
+    }
+
+    msg.innerText = "";
+    btn.innerText = "Checking...";
+    btn.disabled = true;
+
+    try {
+        const res = await fetch(API_URL + "/verify", {
+            headers: { "x-password": pass }
+        });
+
+        const raw = await res.text();
+
+        // DEBUG POPUP ON PHONE – shows what backend really sends
+        alert("VERIFY\nStatus: " + res.status + "\n\nResponse:\n" + raw);
+
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            msg.innerText = "Backend not sending JSON";
+            btn.innerText = "Unlock";
+            btn.disabled = false;
+            return;
+        }
+
         if (data.success) {
             sessionPass = pass;
             document.getElementById('login-overlay').style.display = "none";
             document.getElementById('app-container').style.display = "flex";
-            fetchPath(''); // Load root
+            fetchPath('');
         } else {
-            msg.innerText = "Access Denied";
-            document.getElementById('pass-input').value = "";
+            msg.innerText = "Wrong Password (server said false)";
+            btn.innerText = "Unlock";
+            btn.disabled = false;
+            input.value = "";
         }
-    })
-    .catch(err => msg.innerText = "Connection Error. Check Backend.");
+    } catch (err) {
+        alert("VERIFY fetch error:\n" + err);
+        msg.innerText = "Connection Error";
+        btn.innerText = "Unlock";
+        btn.disabled = false;
+    }
 }
 
 function logout() {
     location.reload();
 }
 
-// --- NAVIGATION ---
 function switchTab(tab) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('section').forEach(s => s.style.display = 'none');
     
     if (tab === 'db') {
         document.getElementById('db-section').style.display = 'block';
-        // Re-target the active class safely
-        const btn = document.querySelector(`button[onclick="switchTab('db')"]`);
-        if(btn) btn.classList.add('active');
+        document.querySelectorAll('.nav-btn')[0].classList.add('active');
         fetchPath(currentPath || '');
     } else {
         document.getElementById('feat-section').style.display = 'block';
-        const btn = document.querySelector(`button[onclick="switchTab('feat')"]`);
-        if(btn) btn.classList.add('active');
+        document.querySelectorAll('.nav-btn')[1].classList.add('active');
         loadFeatures();
     }
 }
 
-// --- DATABASE LOGIC ---
+// ---------- DATABASE LOGIC ----------
 function fetchPath(path) {
     currentPath = path;
-    const displayPath = path ? (path.length > 20 ? '...'+path.slice(-17) : path) : '/';
+    const displayPath = path ? (path.length > 20 ? '...' + path.slice(-17) : path) : '/';
     document.getElementById('current-path').innerText = displayPath;
     document.getElementById('file-list').innerHTML = '<p style="text-align:center; color:#666; margin-top:20px;">Loading...</p>';
 
-    // Fix path formatting for API
-    let endpoint = path.startsWith('/') ? path : '/' + path;
+    const endpoint = path.startsWith('/') ? path : '/' + path;
 
     fetch(API_URL + endpoint, {
         headers: { "x-password": sessionPass }
     })
-    .then(res => res.json())
-    .then(data => {
+    .then(res => res.text())
+    .then(raw => {
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            document.getElementById('file-list').innerHTML =
+                `<p style="text-align:center; color:red;">Invalid JSON from backend</p>`;
+            // debug popup
+            alert("LIST PATH ERROR\nResponse was not JSON:\n" + raw);
+            return;
+        }
+
         const list = document.getElementById('file-list');
         list.innerHTML = "";
         
-        if (path !== "") {
-            const parent = path.split('/').slice(0, -1).join('/');
-            list.innerHTML += `<div class="list-item" onclick="fetchPath('${parent}')"><div class="item-name"><i class="fas fa-level-up-alt"></i> ..</div></div>`;
+        if (currentPath !== "") {
+            const parent = currentPath.split('/').slice(0, -1).join('/');
+            list.innerHTML += `
+                <div class="list-item" onclick="fetchPath('${parent}')">
+                    <div class="item-name"><i class="fas fa-level-up-alt"></i> ..</div>
+                </div>`;
         }
 
-        // Handle if it's a file (editor) or folder (list)
+        if (data.error) {
+            list.innerHTML = `<p style="text-align:center; color:red;">${data.error}</p>`;
+            return;
+        }
+
+        // File vs directory response
         if (!Array.isArray(data)) {
-            if(data.content) {
-               openEditor(data.name, atob(data.content), data.sha);
-               // Go back one step in view so we don't get stuck
-               const parent = path.split('/').slice(0, -1).join('/');
-               currentPath = parent;
-               document.getElementById('current-path').innerText = parent || '/';
+            if (data.content) {
+                fetchFile(currentPath);  // delegate to file loader
+            } else {
+                list.innerHTML = `<p style="text-align:center; color:red;">Unexpected response</p>`;
+                alert("Unexpected LIST response:\n" + raw);
             }
             return;
         }
 
-        // Sort: Folders first, then files
         data.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
 
-        data.forEach(item => {
-            const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-            const clickAction = item.type === "dir" 
-                ? `fetchPath('${item.path}')` 
-                : `fetchFile('${item.path}')`;
-            
-            const deleteBtn = `<i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>`;
-
-            list.innerHTML += `
-            <div class="list-item" onclick="${clickAction}">
-                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
-                <div class="item-actions">${deleteBtn}</div>
-            </div>`;
-        });
-    })
-    .catch(err => {
-        console.error(err);
-        document.getElementById('file-list').innerHTML = '<p style="text-align:center; color:red;">Error fetching data.</p>';
-    });
-}
-
-function fetchFile(path) {
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
-    });
-}
-
-function deleteItem(path, sha) {
-    if(!confirm("Are you sure you want to delete this?")) return;
-    fetch(API_URL + "/" + path, {
-        method: "DELETE",
-        headers: { 
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// --- UPLOAD / CREATE ---
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    
-    // Simple reader for text/code. For images, we need better base64 handling (future update)
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        // e.target.result is like "data:text/html;base64,....."
-        const content = e.target.result.split(',')[1]; 
-        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-        
-        uploadToRepo(path, content);
-    };
-    reader.readAsDataURL(file);
-    input.value = ''; // Reset input
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
-}
-
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
-        method: "PUT",
-        headers: { 
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Upload failed.");
-        }
-    });
-}
-
-// --- EDITOR ---
-let editingPath = "";
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
-    const content = document.getElementById('code-editor').value;
-    // We assume UTF-8 text for now.
-    // btoa fails on unicode characters so we need a wrapper if using emojis
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
-    uploadToRepo(editingPath, base64Content, currentSha);
-}
-
-// --- FEATURES SYSTEM ---
-function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        
-        if (!Array.isArray(data)) {
-            // Check if 404 (folder doesn't exist)
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No 'features' folder found.<br>Create one in Database to start.</p>";
-            return;
-        }
-        
-        data.forEach(item => {
-            if(item.type === "dir") {
-                list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-            }
-        });
-    });
-}
-
-function createFeaturePrompt() {
-    const name = prompt("Feature Name (e.g., calc):");
-    if (!name) return;
-    
-    // Basic template
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body{background:#fff; color:#000; font-family:sans-serif; padding:20px; text-align:center;}
-  button{padding:10px 20px; background:blue; color:white; border:none; border-radius:5px;}
-</style>
-</head>
-<body>
-  <h1>${name}</h1>
-  <p>Welcome to your new feature!</p>
-  <button onclick="alert('It works!')">Test Me</button>
-</body>
-</html>`;
-    
-    // encode
-    const b64 = btoa(html);
-    const path = `features/${name}/index.html`;
-    uploadToRepo(path, b64);
-}
-
-function runFeature(name) {
-    document.getElementById('feature-viewer').style.display = "flex";
-    document.getElementById('feat-title').innerText = name;
-    const frame = document.getElementById('app-frame');
-    frame.srcdoc = "<h3 style='font-family:sans-serif;text-align:center;margin-top:20px;'>Loading Feature...</h3>";
-
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) {
-            const htmlContent = atob(data.content);
-            frame.srcdoc = htmlContent;
-        } else {
-            frame.srcdoc = "Error: index.html not found in this feature folder.";
-        }
-    });
-}
-
-function closeFeature() {
-    document.getElementById('feature-viewer').style.display = "none";
-    document.getElementById('app-frame').srcdoc = "";
-}
         if (data.length === 0) {
             list.innerHTML += '<p style="text-align:center; color:#444; margin-top:10px;">Empty</p>';
         }
 
         data.forEach(item => {
             const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-            const clickAction = item.type === "dir" ? `fetchPath('${item.path}')` : `fetchFile('${item.path}')`;
+            const clickAction = item.type === "dir"
+                ? `fetchPath('${item.path}')`
+                : `fetchFile('${item.path}')`;
             
             list.innerHTML += `
             <div class="list-item" onclick="${clickAction}">
@@ -291,23 +168,44 @@ function closeFeature() {
         });
     })
     .catch(err => {
-        document.getElementById('file-list').innerHTML = `<p style="text-align:center; color:red;">Connection Error</p>`;
+        document.getElementById('file-list').innerHTML =
+            `<p style="text-align:center; color:red;">Connection Error</p>`;
+        alert("LIST PATH fetch error:\n" + err);
     });
 }
 
 function fetchFile(path) {
-    // --- THE TRAP ---
-    // If they touch the password file, KICK THEM OUT.
+    // trap for password file
     if (path.includes('webpass.txt')) {
-        location.reload(); 
+        location.reload();
         return;
     }
-    // ----------------
-    
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
+
+    const cleanPath = path.startsWith('/') ? path : '/' + path;
+
+    fetch(API_URL + cleanPath, {
+        headers: { "x-password": sessionPass }
+    })
+    .then(res => res.text())
+    .then(raw => {
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            alert("FILE RESPONSE NOT JSON:\n" + raw);
+            return;
+        }
+
+        if (!data.content) {
+            alert("FILE LOAD ERROR:\n" + (data.error || "No content field"));
+            return;
+        }
+
+        const content = safeDecodeBase64(data.content);
+        openEditor(data.name, content, data.sha);
+    })
+    .catch(err => {
+        alert("FILE fetch error:\n" + err);
     });
 }
 
@@ -316,580 +214,132 @@ function deleteItem(path, sha) {
         alert("You cannot delete the password file.");
         return;
     }
-    if(!confirm("Delete this?")) return;
-    fetch(API_URL + "/" + path, {
+    if (!confirm("Delete this?")) return;
+
+    const cleanPath = path.startsWith('/') ? path : '/' + path;
+
+    fetch(API_URL + cleanPath, {
         method: "DELETE",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// --- FILE OPERATIONS ---
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const content = e.target.result.split(',')[1]; 
-        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-        uploadToRepo(path, content);
-    };
-    reader.readAsDataURL(file);
-    input.value = ''; 
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
-}
-
-function createFilePrompt() {
-    const name = prompt("New File Name (e.g. notes.txt):");
-    if (!name) return;
-    openEditor(name, "", null);
-}
-
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
-        method: "PUT",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Failed.");
-        }
-    });
-}
-
-// --- EDITOR ---
-let editingPath = "";
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
-    const content = document.getElementById('code-editor').value;
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
-    uploadToRepo(editingPath, base64Content, currentSha);
-}
-
-// --- FEATURES ---
-function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        if (!Array.isArray(data)) {
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
-            return;
-        }
-        data.forEach(item => {
-            if(item.type === "dir") {
-                list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-            }
-        });
-    });
-}
-
-function createFeaturePrompt() {
-    const name = prompt("Feature Name:");
-    if (!name) return;
-    const html = `<h1>${name}</h1>`;
-    uploadToRepo(`features/${name}/index.html`, btoa(html));
-}
-
-function runFeature(name) {
-    document.getElementById('feature-viewer').style.display = "flex";
-    document.getElementById('feat-title').innerText = name;
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) document.getElementById('app-frame').srcdoc = atob(data.content);
-    });
-}
-
-function closeFeature() {
-    document.getElementById('feature-viewer').style.display = "none";
-    document.getElementById('app-frame').srcdoc = "";
-}
-               // Visually step back to the folder so we don't get stuck
-               const parent = path.split('/').slice(0, -1).join('/');
-               currentPath = parent;
-               document.getElementById('current-path').innerText = parent || '/';
-            }
-            return;
-        }
-
-        // --- SAFETY CHECK 3: NOW we can filter ---
-        // Only run filter because we KNOW it is an array now
-        const safeData = data.filter(item => item.name !== 'webpass.txt');
-
-        // Sort: Folders first
-        safeData.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
-
-        if (safeData.length === 0) {
-            list.innerHTML += '<p style="text-align:center; color:#444; margin-top:10px;">Empty Folder</p>';
-        }
-
-        safeData.forEach(item => {
-            const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-            const clickAction = item.type === "dir" ? `fetchPath('${item.path}')` : `fetchFile('${item.path}')`;
-            
-            list.innerHTML += `
-            <div class="list-item" onclick="${clickAction}">
-                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
-                <div class="item-actions">
-                    <i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>
-                </div>
-            </div>`;
-        });
-    })
-    .catch(err => {
-        console.error(err);
-        document.getElementById('file-list').innerHTML = `<p style="text-align:center; color:red;">Connection Error</p>`;
-    });
-}
-
-function fetchFile(path) {
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
-    });
-}
-
-function deleteItem(path, sha) {
-    if(!confirm("Delete this?")) return;
-    fetch(API_URL + "/" + path, {
-        method: "DELETE",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// --- FILE OPERATIONS ---
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const content = e.target.result.split(',')[1]; 
-        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-        uploadToRepo(path, content);
-    };
-    reader.readAsDataURL(file);
-    input.value = ''; 
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
-}
-
-function createFilePrompt() {
-    const name = prompt("New File Name (e.g. notes.txt):");
-    if (!name) return;
-    openEditor(name, "", null);
-}
-
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
-        method: "PUT",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Failed. Check connection.");
-        }
-    });
-}
-
-// --- EDITOR ---
-let editingPath = "";
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
-    const content = document.getElementById('code-editor').value;
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
-    uploadToRepo(editingPath, base64Content, currentSha);
-}
-
-// --- FEATURES ---
-function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        if (!Array.isArray(data)) {
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
-            return;
-        }
-        data.forEach(item => {
-            if(item.type === "dir") {
-                list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-            }
-        });
-    });
-}
-
-function createFeaturePrompt() {
-    const name = prompt("Feature Name:");
-    if (!name) return;
-    const html = `<h1>${name}</h1>`;
-    uploadToRepo(`features/${name}/index.html`, btoa(html));
-}
-
-function runFeature(name) {
-    document.getElementById('feature-viewer').style.display = "flex";
-    document.getElementById('feat-title').innerText = name;
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) document.getElementById('app-frame').srcdoc = atob(data.content);
-    });
-}
-
-function closeFeature() {
-    document.getElementById('feature-viewer').style.display = "none";
-    document.getElementById('app-frame').srcdoc = "";
-}
-            if(data.content) {
-               openEditor(data.name, atob(data.content), data.sha);
-               // Go back to parent folder visually
-               const parent = path.split('/').slice(0, -1).join('/');
-               currentPath = parent;
-               document.getElementById('current-path').innerText = parent || '/';
-            }
-            return;
-        }
-
-        // 3. Handle Folder List (Apply Filter HERE)
-        // We only filter if we are actually looking at a list
-        let filteredData = data.filter(item => item.name !== 'webpass.txt');
-
-        // Sort: Folders first
-        filteredData.sort((a, b) => (a.type === b.type ? 0 : a.type === 'dir' ? -1 : 1));
-
-        if (filteredData.length === 0) {
-            list.innerHTML += '<p style="text-align:center; color:#444; margin-top:10px;">Empty Folder</p>';
-        }
-
-        filteredData.forEach(item => {
-            const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-            const clickAction = item.type === "dir" ? `fetchPath('${item.path}')` : `fetchFile('${item.path}')`;
-            
-            list.innerHTML += `
-            <div class="list-item" onclick="${clickAction}">
-                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
-                <div class="item-actions">
-                    <i class="fas fa-trash" onclick="event.stopPropagation(); deleteItem('${item.path}', '${item.sha}')"></i>
-                </div>
-            </div>`;
-        });
-    })
-    .catch(err => {
-        document.getElementById('file-list').innerHTML = `<p style="text-align:center; color:red;">Connection Error</p>`;
-    });
-}
-
-function fetchFile(path) {
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
-    });
-}
-
-function deleteItem(path, sha) {
-    if(!confirm("Delete this?")) return;
-    fetch(API_URL + "/" + path, {
-        method: "DELETE",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// --- FILE OPERATIONS ---
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const content = e.target.result.split(',')[1]; 
-        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-        uploadToRepo(path, content);
-    };
-    reader.readAsDataURL(file);
-    input.value = ''; 
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
-}
-
-function createFilePrompt() {
-    const name = prompt("New File Name (e.g. todo.txt):");
-    if (!name) return;
-    openEditor(name, "", null);
-}
-
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
-        method: "PUT",
-        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Failed. Check connection.");
-        }
-    });
-}
-
-// --- EDITOR ---
-let editingPath = "";
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
-    const content = document.getElementById('code-editor').value;
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
-    uploadToRepo(editingPath, base64Content, currentSha);
-}
-
-// --- FEATURES ---
-function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        if (!Array.isArray(data)) {
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
-            return;
-        }
-        data.forEach(item => {
-            if(item.type === "dir") {
-                list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-            }
-        });
-    });
-}
-
-function createFeaturePrompt() {
-    const name = prompt("Feature Name:");
-    if (!name) return;
-    const html = `<h1>${name}</h1>`;
-    uploadToRepo(`features/${name}/index.html`, btoa(html));
-}
-
-function runFeature(name) {
-    document.getElementById('feature-viewer').style.display = "flex";
-    document.getElementById('feat-title').innerText = name;
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) document.getElementById('app-frame').srcdoc = atob(data.content);
-    });
-}
-
-function closeFeature() {
-    document.getElementById('feature-viewer').style.display = "none";
-    document.getElementById('app-frame').srcdoc = "";
-}
-            <div class="list-item" onclick="${clickAction}">
-                <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
-                <div class="item-actions">${deleteBtn}</div>
-            </div>`;
-        });
-    })
-    .catch(err => {
-        console.error(err);
-        document.getElementById('file-list').innerHTML = '<p style="text-align:center; color:red;">Error fetching data.</p>';
-    });
-}
-
-function fetchFile(path) {
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
-    });
-}
-
-function deleteItem(path, sha) {
-    if(!confirm("Are you sure you want to delete this?")) return;
-    fetch(API_URL + "/" + path, {
-        method: "DELETE",
-        headers: { 
+        headers: {
             "x-password": sessionPass,
             "Content-Type": "application/json"
         },
         body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
+    })
+    .then(res => {
+        if (!res.ok) {
+            alert("Delete failed with status " + res.status);
+        }
+        fetchPath(currentPath);
+    })
+    .catch(err => {
+        alert("DELETE fetch error:\n" + err);
+    });
 }
 
-// --- FILE / FOLDER OPERATIONS ---
-
+// ---------- FILE OPERATIONS ----------
 function handleFileUpload(input) {
     const file = input.files[0];
     if (!file) return;
-    
     const reader = new FileReader();
     reader.onload = function(e) {
-        const content = e.target.result.split(',')[1]; 
+        const content = e.target.result.split(',')[1];
         const path = currentPath ? `${currentPath}/${file.name}` : file.name;
         uploadToRepo(path, content);
     };
     reader.readAsDataURL(file);
-    input.value = ''; 
+    input.value = '';
 }
 
 function createFolderPrompt() {
     const name = prompt("Folder Name:");
     if (!name) return;
     const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
+    uploadToRepo(path, safeEncodeBase64("placeholder"));
 }
 
 function createFilePrompt() {
     const name = prompt("New File Name (e.g. notes.txt):");
     if (!name) return;
-    
-    // Check if user added extension, if not, maybe add .txt or just leave it
-    // Open editor with empty content and null SHA (indicates new file)
     openEditor(name, "", null);
 }
 
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
+function uploadToRepo(path, contentBase64, sha = null) {
+    const cleanPath = path.startsWith('/') ? path : '/' + path;
+
+    fetch(API_URL + cleanPath, {
         method: "PUT",
-        headers: { 
+        headers: {
             "x-password": sessionPass,
             "Content-Type": "application/json"
         },
         body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Operation failed.");
+    })
+    .then(res => res.text())
+    .then(raw => {
+        // optional debug
+        // alert("UPLOAD RESPONSE:\n" + raw);
+        if (document.getElementById('editor-modal').style.display === 'flex') {
+            closeEditor();
         }
+        fetchPath(currentPath);
+    })
+    .catch(err => {
+        alert("UPLOAD fetch error:\n" + err);
     });
 }
 
-// --- EDITOR ---
-let editingPath = "";
-
+// ---------- EDITOR ----------
 function openEditor(name, content, sha) {
-    // If we are creating a new file (sha is null), append name to current path
-    // If we are editing existing, the path is already handled by fetch logic, 
-    // BUT for consistency we rebuild it based on context
-    if (sha === null) {
-        // Creating new
-        editingPath = currentPath ? `${currentPath}/${name}` : name;
-    } else {
-        // Editing existing - usually we just need the full path. 
-        // For simplicity in this logic, we assume we are inside the folder 
-        // where the file lives or just clicked it.
-        // We will reconstruct based on currentPath + name for safety.
-        // Note: 'name' passed here is just filename.
-        // If we opened via fetchFile from a list, currentPath is the parent folder.
-        editingPath = currentPath ? `${currentPath}/${name}` : name;
+    editingPath = currentPath ? `${currentPath}/${name}` : name;
+    currentSha = sha;
+    document.getElementById('editor-filename').innerText = name;
+    document.getElementById('code-editor').value = content;
+    document.getElementById('editor-modal').style.display = 'flex';
+}
+
+function closeEditor() {
+    document.getElementById('editor-modal').style.display = 'none';
+    document.getElementById('code-editor').value = "";
+    editingPath = "";
+    currentSha = null;
+}
+
+function saveFile() {
+    if (!editingPath) {
+        alert("No file path set.");
+        return;
     }
-
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
     const content = document.getElementById('code-editor').value;
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
+    const base64Content = safeEncodeBase64(content);
     uploadToRepo(editingPath, base64Content, currentSha);
 }
 
-// --- FEATURES SYSTEM ---
+// ---------- FEATURES ----------
 function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        
-        if (!Array.isArray(data)) {
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No 'features' folder found.<br>Create one in Database to start.</p>";
+    fetch(API_URL + "/features", {
+        headers: { "x-password": sessionPass }
+    })
+    .then(res => res.text())
+    .then(raw => {
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            alert("FEATURE LIST NOT JSON:\n" + raw);
             return;
         }
-        
+
+        const list = document.getElementById('feature-list');
+        list.innerHTML = "";
+
+        if (!Array.isArray(data)) {
+            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
+            return;
+        }
+
         data.forEach(item => {
-            if(item.type === "dir") {
+            if (item.type === "dir") {
                 list.innerHTML += `
                 <div class="feature-card" onclick="runFeature('${item.name}')">
                     <div class="feature-icon"><i class="fas fa-bolt"></i></div>
@@ -897,204 +347,47 @@ function loadFeatures() {
                 </div>`;
             }
         });
-    });
-}
 
-function createFeaturePrompt() {
-    const name = prompt("Feature Name (e.g., calc):");
-    if (!name) return;
-    
-    const html = `<h1>${name}</h1><p>New Feature</p>`;
-    const b64 = btoa(html);
-    const path = `features/${name}/index.html`;
-    uploadToRepo(path, b64);
-}
-
-function runFeature(name) {
-    document.getElementById('feature-viewer').style.display = "flex";
-    document.getElementById('feat-title').innerText = name;
-    const frame = document.getElementById('app-frame');
-    frame.srcdoc = "<h3 style='font-family:sans-serif;text-align:center;margin-top:20px;'>Loading...</h3>";
-
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) {
-            const htmlContent = atob(data.content);
-            frame.srcdoc = htmlContent;
-        } else {
-            frame.srcdoc = "Error: index.html not found.";
+        if (!list.innerHTML) {
+            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
         }
-    });
-}
-
-function closeFeature() {
-    document.getElementById('feature-viewer').style.display = "none";
-    document.getElementById('app-frame').srcdoc = "";
-}
-            </div>`;
-        });
     })
     .catch(err => {
-        console.error(err);
-        document.getElementById('file-list').innerHTML = '<p style="text-align:center; color:red;">Error fetching data.</p>';
-    });
-}
-
-function fetchFile(path) {
-    fetch(API_URL + "/" + path, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        openEditor(data.name, atob(data.content), data.sha);
-    });
-}
-
-function deleteItem(path, sha) {
-    if(!confirm("Are you sure you want to delete this?")) return;
-    fetch(API_URL + "/" + path, {
-        method: "DELETE",
-        headers: { 
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// --- UPLOAD / CREATE ---
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    
-    // Simple reader for text/code. For images, we need better base64 handling (future update)
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        // e.target.result is like "data:text/html;base64,....."
-        const content = e.target.result.split(',')[1]; 
-        const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-        
-        uploadToRepo(path, content);
-    };
-    reader.readAsDataURL(file);
-    input.value = ''; // Reset input
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-    uploadToRepo(path, btoa("placeholder"));
-}
-
-function uploadToRepo(path, contentBase64, sha=null) {
-    fetch(API_URL + "/" + path, {
-        method: "PUT",
-        headers: { 
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    }).then(res => {
-        if(res.ok) {
-            if (document.getElementById('editor-modal').style.display === 'flex') closeEditor();
-            fetchPath(currentPath);
-        } else {
-            alert("Upload failed.");
-        }
-    });
-}
-
-// --- EDITOR ---
-let editingPath = "";
-function openEditor(name, content, sha) {
-    editingPath = currentPath ? `${currentPath}/${name}` : name;
-    currentSha = sha;
-    document.getElementById('editor-filename').innerText = name;
-    document.getElementById('code-editor').value = content;
-    document.getElementById('editor-modal').style.display = 'flex';
-}
-
-function closeEditor() {
-    document.getElementById('editor-modal').style.display = 'none';
-    document.getElementById('code-editor').value = "";
-}
-
-function saveFile() {
-    const content = document.getElementById('code-editor').value;
-    // We assume UTF-8 text for now.
-    // btoa fails on unicode characters so we need a wrapper if using emojis
-    const base64Content = btoa(unescape(encodeURIComponent(content))); 
-    uploadToRepo(editingPath, base64Content, currentSha);
-}
-
-// --- FEATURES SYSTEM ---
-function loadFeatures() {
-    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById('feature-list');
-        list.innerHTML = "";
-        
-        if (!Array.isArray(data)) {
-            // Check if 404 (folder doesn't exist)
-            list.innerHTML = "<p style='grid-column: 1/-1; text-align:center;'>No 'features' folder found.<br>Create one in Database to start.</p>";
-            return;
-        }
-        
-        data.forEach(item => {
-            if(item.type === "dir") {
-                list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-            }
-        });
+        alert("FEATURE LIST fetch error:\n" + err);
     });
 }
 
 function createFeaturePrompt() {
-    const name = prompt("Feature Name (e.g., calc):");
+    const name = prompt("Feature Name:");
     if (!name) return;
-    
-    // Basic template
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body{background:#fff; color:#000; font-family:sans-serif; padding:20px; text-align:center;}
-  button{padding:10px 20px; background:blue; color:white; border:none; border-radius:5px;}
-</style>
-</head>
-<body>
-  <h1>${name}</h1>
-  <p>Welcome to your new feature!</p>
-  <button onclick="alert('It works!')">Test Me</button>
-</body>
-</html>`;
-    
-    // encode
-    const b64 = btoa(html);
-    const path = `features/${name}/index.html`;
-    uploadToRepo(path, b64);
+    const html = `<h1>${name}</h1>`;
+    uploadToRepo(`features/${name}/index.html`, safeEncodeBase64(html));
 }
 
 function runFeature(name) {
     document.getElementById('feature-viewer').style.display = "flex";
     document.getElementById('feat-title').innerText = name;
-    const frame = document.getElementById('app-frame');
-    frame.srcdoc = "<h3 style='font-family:sans-serif;text-align:center;margin-top:20px;'>Loading Feature...</h3>";
 
-    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
-    .then(res => res.json())
-    .then(data => {
-        if(data.content) {
-            const htmlContent = atob(data.content);
-            frame.srcdoc = htmlContent;
-        } else {
-            frame.srcdoc = "Error: index.html not found in this feature folder.";
+    fetch(API_URL + `/features/${name}/index.html`, {
+        headers: { "x-password": sessionPass }
+    })
+    .then(res => res.text())
+    .then(raw => {
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            alert("FEATURE FILE NOT JSON:\n" + raw);
+            return;
         }
+        if (data.content) {
+            document.getElementById('app-frame').srcdoc = safeDecodeBase64(data.content);
+        } else {
+            alert("Feature has no content.");
+        }
+    })
+    .catch(err => {
+        alert("FEATURE fetch error:\n" + err);
     });
 }
 
