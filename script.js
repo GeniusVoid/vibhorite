@@ -46,7 +46,7 @@ function stepUpload() {
     }
 }
 
-// ---------- LOAD HIDE PASS ----------
+// ---------- LOAD HIDE PASS (for private folder only) ----------
 function getHidePass() {
     if (hidePassCache !== null) return Promise.resolve(hidePassCache);
     return fetch(API_URL + "/hidepass.txt", { headers: { "x-password": sessionPass } })
@@ -58,23 +58,13 @@ function getHidePass() {
         .catch(() => "");
 }
 
-// ---------- OPERATION SECURITY (use hidepass.txt directly) ----------
+// ---------- OPERATION SECURITY (DISABLED) ----------
 function requireSecurity(action) {
-    getHidePass().then(realPass => {
-        if (!realPass) {
-            alert("Operation password (hidepass.txt) is not set.");
-            return;
-        }
-        const input = prompt("Enter operation password:");
-        if (input && input.trim() === realPass) {
-            action();
-        } else {
-            alert("Wrong password.");
-        }
-    });
+    // No extra password for edits/uploads/deletes anymore
+    action();
 }
 
-// ---------- PRIVATE FOLDER (also uses hidePass) ----------
+// ---------- PRIVATE FOLDER ----------
 function promptPrivate(path) {
     getHidePass().then(real => {
         if (!real) {
