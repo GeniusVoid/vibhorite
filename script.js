@@ -17,194 +17,116 @@ let uploadDone = 0;
 
 // ---------- HELPERS ----------
 function safeDecodeBase64(str) {
-    try {
-        return decodeURIComponent(escape(atob(str)));
-    } catch (e) {
-        return atob(str);
-    }
+    try { return decodeURIComponent(escape(atob(str))); }
+    catch { return atob(str); }
 }
-
 function safeEncodeBase64(str) {
     return btoa(unescape(encodeURIComponent(str)));
 }
-
 function cleanPath(path) {
     return path.startsWith("/") ? path : "/" + path;
 }
 
-// upload progress helpers
+// ---------- UPLOAD BAR ----------
 function startUpload(totalFiles) {
     uploadInProgress = true;
     uploadTotal = totalFiles;
     uploadDone = 0;
-
-    const bar = document.getElementById("upload-progress-fill");
-    const text = document.getElementById("upload-status-text");
-    bar.style.width = "0%";
-    text.textContent = totalFiles > 1 ? `Uploading ${totalFiles} files...` : "Uploading file...";
     document.getElementById("upload-status").style.display = "flex";
+    document.getElementById("upload-progress-fill").style.width = "0%";
+    document.getElementById("upload-status-text").textContent =
+        totalFiles > 1 ? `Uploading ${totalFiles} files...` : "Uploading file...";
 }
-
 function stepUpload() {
-    if (!uploadInProgress || uploadTotal === 0) return;
     uploadDone++;
-    const percent = Math.min(100, Math.round((uploadDone / uploadTotal) * 100));
+    const percent = Math.round((uploadDone / uploadTotal) * 100);
     document.getElementById("upload-progress-fill").style.width = percent + "%";
-
-    if (percent >= 100) {
+    if (percent === 100) {
         document.getElementById("upload-status-text").textContent = "Upload complete";
-        setTimeout(() => {
-            document.getElementById("upload-status").style.display = "none";
-            uploadInProgress = false;
-        }, 700);
+        setTimeout(() => { document.getElementById("upload-status").style.display = "none"; }, 700);
     }
 }
 
-// load hidepass
+// ---------- LOAD PASSWORD FILES ----------
 function getHidePass() {
     if (hidePassCache !== null) return Promise.resolve(hidePassCache);
-
-    return fetch(API_URL + "/hidepass.txt", {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => (res.ok ? res.json() : null))
-        .then(data => {
-            if (data && data.content) {
-                hidePassCache = safeDecodeBase64(data.content).trim();
-            } else {
-                hidePassCache = "";
-            }
+    return fetch(API_URL + "/hidepass.txt", { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(d => {
+            hidePassCache = d && d.content ? safeDecodeBase64(d.content).trim() : "";
             return hidePassCache;
-        })
-        .catch(() => {
-            hidePassCache = "";
-            return hidePassCache;
-        });
+        }).catch(() => "");
 }
-
-// load webpass
 function getWebPass() {
     if (webPassCache !== null) return Promise.resolve(webPassCache);
-
-    return fetch(API_URL + "/webpass.txt", {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => (res.ok ? res.json() : null))
-        .then(data => {
-            if (data && data.content) {
-                webPassCache = safeDecodeBase64(data.content).trim();
-            } else {
-                webPassCache = "";
-            }
+    return fetch(API_URL + "/webpass.txt", { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(d => {
+            webPassCache = d && d.content ? safeDecodeBase64(d.content).trim() : "";
             return webPassCache;
-        })
-        .catch(() => {
-            webPassCache = "";
-            return webPassCache;
-        });
+        }).catch(() => "");
 }
 
-// secondary security password (6-digit dynamic code)
-// format: first2(webpass) + HH(24h) + last2(hidepass)
+// ---------- SECONDARY SECURITY (6-digit) ----------
 async function verifyOperationPassword() {
     const [webPass, hidePass] = await Promise.all([getWebPass(), getHidePass()]);
-    const first2 = (webPass || "").slice(0, 2);
-    const last2 = (hidePass || "").slice(-2);
+    const first2 = webPass.slice(0, 2);
+    const last2 = hidePass.slice(-2);
+    const hour = String(new Date().getHours()).padStart(2, "0"); // 24-hour
 
-    if (first2.length < 2 || last2.length < 2) {
-        alert("Security passwords not configured correctly.");
-        return false;
-    }
-
-    const now = new Date();
-    const hour = String(now.getHours()).padStart(2, "0"); // 24-hour format (00–23)
-
-    // 6-digit code (first2 + hour + last2)
     const code = first2 + hour + last2;
-
     const input = prompt("Enter security code:");
-    if (input === null) return false;
-    if (input.trim() === code) return true;
-
-    alert("Wrong security code.");
-    return false;
+    return input && input.trim() === code;
 }
-
 function requireSecurity(action) {
-    verifyOperationPassword().then(ok => {
-        if (ok) action();
-    });
+    verifyOperationPassword().then(ok => { if (ok) action(); else alert("Wrong security code."); });
 }
 
-// prompt for private folder password
+// ---------- PRIVATE FOLDER ----------
 function promptPrivate(path) {
-    getHidePass().then(realPass => {
-        if (!realPass) {
-            alert("Private password not set.");
-            return;
-        }
-        const input = prompt("Enter private password:");
-        if (input === null) return;
-        if (input.trim() === realPass) {
+    getHidePass().then(real => {
+        const input = prompt("Enter private folder password:");
+        if (input && input.trim() === real) {
             privateUnlocked = true;
             fetchPath(path);
-        } else {
-            alert("Wrong private password.");
-        }
+        } else alert("Wrong private password.");
     });
 }
 
-// ---------- AUTH ----------
+// ---------- LOGIN ----------
 function attemptLogin() {
-    const input = document.getElementById("pass-input");
-    const btn = document.querySelector(".login-box button");
+    const pass = document.getElementById("pass-input").value.trim();
     const msg = document.getElementById("login-msg");
+    const btn = document.querySelector(".login-box button");
 
-    const pass = input.value.trim();
-    if (!pass) {
-        msg.innerText = "Please enter PIN";
-        return;
-    }
+    if (!pass) return msg.innerText = "Please enter PIN";
 
     msg.innerText = "";
     btn.innerText = "Checking...";
     btn.disabled = true;
 
-    fetch(API_URL + "/verify", {
-        headers: { "x-password": pass }
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
+    fetch(API_URL + "/verify", { headers: { "x-password": pass } })
+        .then(r => r.json()).then(d => {
+            if (d.success) {
                 sessionPass = pass;
                 document.getElementById("login-overlay").style.display = "none";
                 document.getElementById("app-container").style.display = "flex";
-                currentPath = "";
-                privateUnlocked = false;
-                hidePassCache = null;
-                webPassCache = null;
                 fetchPath("");
             } else {
                 msg.innerText = "Wrong Password";
                 btn.innerText = "Unlock";
                 btn.disabled = false;
-                input.value = "";
             }
-        })
-        .catch(() => {
+        }).catch(() => {
             msg.innerText = "Connection Error";
             btn.innerText = "Unlock";
             btn.disabled = false;
         });
 }
+function logout() { location.reload(); }
 
-function logout() {
-    location.reload();
-}
-
+// ---------- TABS ----------
 function switchTab(tab) {
     document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll("section").forEach(s => (s.style.display = "none"));
+    document.querySelectorAll("section").forEach(s => s.style.display = "none");
 
     if (tab === "db") {
         document.getElementById("db-section").style.display = "block";
@@ -217,400 +139,239 @@ function switchTab(tab) {
     }
 }
 
-// ---------- DATABASE / LISTING ----------
+// ---------- LIST FILES ----------
 function fetchPath(path) {
     currentPath = path;
-    const displayPath = path ? (path.length > 20 ? "..." + path.slice(-17) : path) : "/";
-    document.getElementById("current-path").innerText = displayPath;
+    document.getElementById("current-path").innerText = path || "/";
     document.getElementById("file-list").innerHTML =
-        '<p style="text-align:center; color:#666; margin-top:20px;">Loading...</p>';
+        '<p style="text-align:center;color:#666;margin-top:20px;">Loading...</p>';
 
-    const endpoint = cleanPath(path || "");
-
-    fetch(API_URL + endpoint, {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => res.json())
-        .then(data => {
+    fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(data => {
             const list = document.getElementById("file-list");
             list.innerHTML = "";
 
-            if (currentPath !== "") {
-                const parent = currentPath.split("/").slice(0, -1).join("/");
+            if (path) {
+                const parent = path.split("/").slice(0, -1).join("/");
                 list.innerHTML += `
                 <div class="list-item" onclick="fetchPath('${parent}')">
-                    <div class="item-name">
-                        <i class="fas fa-level-up-alt"></i> ..
-                    </div>
+                    <div class="item-name"><i class="fas fa-level-up-alt"></i> ..</div>
                 </div>`;
             }
 
-            if (data.error) {
-                list.innerHTML = `<p style="text-align:center; color:red;">${data.error}</p>`;
-                return;
-            }
+            if (!Array.isArray(data)) return;
 
-            if (!Array.isArray(data)) {
-                if (data.content) {
-                    fetchFile(currentPath);
-                } else {
-                    list.innerHTML = `<p style="text-align:center; color:red;">Unexpected response</p>`;
-                }
-                return;
-            }
-
-            data.sort((a, b) => (a.type === b.type ? 0 : a.type === "dir" ? -1 : 1));
-
-            if (data.length === 0) {
-                list.innerHTML = '<p style="text-align:center; color:#444; margin-top:10px;">Empty</p>';
-            }
+            data.sort((a, b) => a.type === b.type ? 0 : a.type === "dir" ? -1 : 1);
 
             data.forEach(item => {
-                const isPrivateRoot =
-                    item.type === "dir" && item.name === "private" && currentPath === "";
-
+                const isPrivateRoot = item.name === "private" && !path;
                 const icon = item.type === "dir" ? "fa-folder" : "fa-file-code";
-                let clickAction;
 
-                if (isPrivateRoot && !privateUnlocked) {
-                    clickAction = `promptPrivate('${item.path}')`;
-                } else if (item.type === "dir") {
-                    clickAction = `fetchPath('${item.path}')`;
-                } else {
-                    clickAction = `fetchFile('${item.path}')`;
-                }
+                let click = item.type === "dir"
+                    ? isPrivateRoot && !privateUnlocked
+                        ? `promptPrivate('${item.path}')`
+                        : `fetchPath('${item.path}')`
+                    : `fetchFile('${item.path}')`;
 
-                let actionsHtml = "";
-                if (
-                    item.type !== "dir" &&
-                    !item.name.includes("webpass.txt") &&
-                    !item.name.includes("hidepass.txt")
-                ) {
-                    actionsHtml += `
-                    <i class="fas fa-download"
-                       onclick="event.stopPropagation(); secureDownload('${item.path}', '${item.name}')"></i>`;
-                }
-                if (
-                    !item.name.includes("webpass.txt") &&
-                    !item.name.includes("hidepass.txt")
-                ) {
-                    actionsHtml += `
-                <i class="fas fa-trash"
-                   onclick="event.stopPropagation(); secureDelete('${item.path}', '${item.sha}')"></i>`;
+                let actions = "";
+                if (!item.name.includes("webpass.txt") && !item.name.includes("hidepass.txt")) {
+                    if (item.type !== "dir")
+                        actions += `<i class="fas fa-download" onclick="event.stopPropagation(); secureDownload('${item.path}','${item.name}')"></i>`;
+                    actions += `<i class="fas fa-trash" onclick="event.stopPropagation(); secureDelete('${item.path}','${item.sha}')"></i>`;
                 }
 
                 list.innerHTML += `
-            <div class="list-item" onclick="${clickAction}">
-                <div class="item-name">
-                    <i class="fas ${icon}"></i> ${item.name}
-                </div>
-                <div class="item-actions">
-                    ${actionsHtml}
-                </div>
-            </div>`;
+                <div class="list-item" onclick="${click}">
+                    <div class="item-name"><i class="fas ${icon}"></i> ${item.name}</div>
+                    <div class="item-actions">${actions}</div>
+                </div>`;
             });
-        })
-        .catch(() => {
-            document.getElementById("file-list").innerHTML =
-                `<p style="text-align:center; color:red;">Connection Error</p>`;
         });
 }
 
-// ---------- FILE VIEW / DOWNLOAD ----------
+// ---------- FILE OPEN / SAVE ----------
 function fetchFile(path) {
-    if (path.includes("webpass.txt") || path.includes("hidepass.txt")) {
-        location.reload();
-        return;
-    }
-
-    const endpoint = cleanPath(path);
-
-    fetch(API_URL + endpoint, {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.content) return;
-            const content = safeDecodeBase64(data.content);
-            openEditor(path, content, data.sha);
-        });
+    if (path.includes("webpass.txt") || path.includes("hidepass.txt")) return location.reload();
+    fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(d => openEditor(path, safeDecodeBase64(d.content || ""), d.sha));
 }
-
-// wrapper for secure download
-function secureDownload(path, name) {
-    requireSecurity(() => downloadItem(path, name));
-}
-
-function downloadItem(path, name) {
-    if (path.includes("webpass.txt") || path.includes("hidepass.txt")) return;
-
-    const endpoint = cleanPath(path);
-
-    fetch(API_URL + endpoint, {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.content) return;
-
-            const binaryStr = atob(data.content);
-            const len = binaryStr.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryStr.charCodeAt(i);
-            }
-
-            const blob = new Blob([bytes]);
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = name || path.split("/").pop();
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        });
-}
-
-// wrapper for secure delete
-function secureDelete(path, sha) {
-    if (path.includes("webpass.txt") || path.includes("hidepass.txt")) {
-        alert("You cannot delete password files.");
-        return;
-    }
-    if (!confirm("Delete this?")) return;
-    requireSecurity(() => deleteItem(path, sha));
-}
-
-function deleteItem(path, sha) {
-    const endpoint = cleanPath(path);
-
-    fetch(API_URL + endpoint, {
-        method: "DELETE",
-        headers: {
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ sha: sha })
-    }).then(() => fetchPath(currentPath));
-}
-
-// ---------- FILE / FOLDER UPLOAD ----------
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-
-    requireSecurity(() => {
-        startUpload(1);
-
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            const content = e.target.result.split(",")[1];
-            const path = currentPath ? `${currentPath}/${file.name}` : file.name;
-            uploadToRepo(path, content, null, {
-                onDone: stepUpload
-            });
-        };
-        reader.readAsDataURL(file);
-        input.value = "";
-    });
-}
-
-function handleFolderUpload(input) {
-    const files = Array.from(input.files || []);
-    if (!files.length) return;
-
-    requireSecurity(() => {
-        startUpload(files.length);
-        let remaining = files.length;
-
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                const content = e.target.result.split(",")[1];
-                const relPath = file.webkitRelativePath || file.name;
-                const path = currentPath ? `${currentPath}/${relPath}` : relPath;
-
-                uploadToRepo(path, content, null, {
-                    refresh: false,
-                    onDone: () => {
-                        stepUpload();
-                        remaining--;
-                        if (remaining === 0) {
-                            fetchPath(currentPath);
-                        }
-                    }
-                });
-            };
-            reader.readAsDataURL(file);
-        });
-
-        input.value = "";
-    });
-}
-
-function createFolderPrompt() {
-    const name = prompt("Folder Name:");
-    if (!name) return;
-    requireSecurity(() => {
-        const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
-        uploadToRepo(path, safeEncodeBase64("placeholder"));
-    });
-}
-
-function createFilePrompt() {
-    const name = prompt("New File Name (e.g. notes.txt):");
-    if (!name) return;
-    const path = currentPath ? `${currentPath}/${name}` : name;
-    // starting to edit a new file counts as "create"
-    requireSecurity(() => {
-        openEditor(path, "", null);
-    });
-}
-
-// Manual full-path file creation (you type code then save)
-function createFileWithPathPrompt() {
-    let fullPath = prompt("New File Full Path (e.g. folder/sub/file.txt):");
-    if (!fullPath) return;
-    fullPath = fullPath.trim();
-    if (!fullPath) return;
-
-    if (!fullPath.startsWith("/") && currentPath) {
-        fullPath = currentPath + "/" + fullPath;
-    }
-    if (fullPath.startsWith("/")) {
-        fullPath = fullPath.slice(1);
-    }
-
-    requireSecurity(() => {
-        openEditor(fullPath, "", null);
-    });
-}
-
-function uploadToRepo(path, contentBase64, sha = null, options = {}) {
-    const endpoint = cleanPath(path);
-    const refresh = options.refresh !== false;
-    const onDone = typeof options.onDone === "function" ? options.onDone : null;
-
-    fetch(API_URL + endpoint, {
-        method: "PUT",
-        headers: {
-            "x-password": sessionPass,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ content: contentBase64, sha: sha })
-    })
-        .then(res => {
-            if (!res.ok) {
-                alert("Upload failed.");
-            }
-            if (onDone) onDone();
-            if (
-                document.getElementById("editor-modal").style.display === "flex" &&
-                options.closeEditor !== false
-            ) {
-                closeEditor();
-            }
-            if (refresh) fetchPath(currentPath);
-        })
-        .catch(() => {
-            alert("Upload error.");
-            if (onDone) onDone();
-        });
-}
-
-// ---------- EDITOR ----------
 function openEditor(path, content, sha) {
     editingPath = path;
     currentSha = sha;
-    const name = path.split("/").pop() || path;
-
-    document.getElementById("editor-filename").innerText = name;
+    document.getElementById("editor-filename").innerText = path.split("/").pop();
     document.getElementById("code-editor").value = content;
     document.getElementById("editor-modal").style.display = "flex";
 }
-
 function closeEditor() {
     document.getElementById("editor-modal").style.display = "none";
     document.getElementById("code-editor").value = "";
-    editingPath = "";
-    currentSha = null;
 }
-
 function saveFile() {
-    if (!editingPath) {
-        alert("No file selected.");
-        return;
-    }
-
     requireSecurity(() => {
-        const content = document.getElementById("code-editor").value;
-        const base64Content = safeEncodeBase64(content);
-
         startUpload(1);
-        uploadToRepo(editingPath, base64Content, currentSha, {
+        uploadToRepo(editingPath, safeEncodeBase64(document.getElementById("code-editor").value), currentSha, {
             onDone: stepUpload
         });
     });
 }
 
-// ---------- FEATURES ----------
-function loadFeatures() {
-    fetch(API_URL + "/features", {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => res.json())
-        .then(data => {
-            const list = document.getElementById("feature-list");
-            list.innerHTML = "";
-
-            if (!Array.isArray(data)) {
-                list.innerHTML =
-                    "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
-                return;
-            }
-
-            data.forEach(item => {
-                if (item.type === "dir") {
-                    list.innerHTML += `
-                <div class="feature-card" onclick="runFeature('${item.name}')">
-                    <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                    <h3>${item.name}</h3>
-                </div>`;
-                }
-            });
-
-            if (!list.innerHTML) {
-                list.innerHTML =
-                    "<p style='grid-column: 1/-1; text-align:center;'>No features installed.</p>";
-            }
+// ---------- UPLOAD / DELETE / DOWNLOAD ----------
+function secureDelete(path, sha) { if (confirm("Delete?")) requireSecurity(() => deleteItem(path, sha)); }
+function deleteItem(path, sha) {
+    fetch(API_URL + cleanPath(path), {
+        method: "DELETE",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ sha })
+    }).then(() => fetchPath(currentPath));
+}
+function secureDownload(path, name) { requireSecurity(() => downloadItem(path, name)); }
+function downloadItem(path, name) {
+    fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(d => {
+            const u8 = Uint8Array.from(atob(d.content), c => c.charCodeAt(0));
+            const url = URL.createObjectURL(new Blob([u8]));
+            const a = Object.assign(document.createElement("a"), { href: url, download: name });
+            a.click(); URL.revokeObjectURL(url);
         });
 }
-
-function createFeaturePrompt() {
-    const name = prompt("Feature Name:");
-    if (!name) return;
-    requireSecurity(() => {
-        const html = `<h1>${name}</h1>`;
-        uploadToRepo(`features/${name}/index.html`, safeEncodeBase64(html));
+function uploadToRepo(path, base64, sha, opt = {}) {
+    fetch(API_URL + cleanPath(path), {
+        method: "PUT",
+        headers: { "x-password": sessionPass, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: base64, sha })
+    }).then(() => {
+        if (opt.onDone) opt.onDone();
+        if (opt.closeEditor !== false && document.getElementById("editor-modal").style.display === "flex") closeEditor();
+        if (opt.refresh !== false) fetchPath(currentPath);
     });
 }
 
-function runFeature(name) {
-    document.getElementById("feature-viewer").style.display = "flex";
-    document.getElementById("feat-title").innerText = name;
+// ---------- SINGLE FILE UPLOAD ----------
+function handleFileUpload(input) {
+    const file = input.files[0];
+    input.value = "";
+    requireSecurity(() => {
+        startUpload(1);
+        const r = new FileReader();
+        r.onload = e => {
+            uploadToRepo(currentPath ? `${currentPath}/${file.name}` : file.name,
+                e.target.result.split(",")[1], null, { onDone: stepUpload });
+        };
+        r.readAsDataURL(file);
+    });
+}
 
-    fetch(API_URL + `/features/${name}/index.html`, {
-        headers: { "x-password": sessionPass }
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (data.content) {
-                document.getElementById("app-frame").srcdoc = safeDecodeBase64(data.content);
-            }
+// ---------- FOLDER UPLOAD ----------
+function handleFolderUpload(input) {
+    const files = [...input.files];
+    input.value = "";
+    requireSecurity(() => {
+        startUpload(files.length);
+        let left = files.length;
+        files.forEach(f => {
+            const r = new FileReader();
+            r.onload = e => {
+                const rel = f.webkitRelativePath || f.name;
+                uploadToRepo(currentPath ? `${currentPath}/${rel}` : rel, e.target.result.split(",")[1], null, {
+                    refresh: false,
+                    onDone: () => {
+                        stepUpload();
+                        left--;
+                        if (!left) fetchPath(currentPath);
+                    }
+                });
+            };
+            r.readAsDataURL(f);
+        });
+    });
+}
+
+// ---------- FOLDER / FILE CREATION ----------
+function createFolderPrompt() {
+    const name = prompt("Folder Name:");
+    if (!name) return;
+    requireSecurity(() => uploadToRepo(currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`, safeEncodeBase64("placeholder")));
+}
+function createFilePrompt() {
+    const name = prompt("New File Name:");
+    if (!name) return;
+    const path = currentPath ? `${currentPath}/${name}` : name;
+    requireSecurity(() => openEditor(path, "", null));
+}
+
+// ---------- FEATURES ----------
+function loadFeatures() {
+    fetch(API_URL + "/features", { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(data => {
+            const list = document.getElementById("feature-list");
+            list.innerHTML = "";
+            (data || []).forEach(item => {
+                if (item.type === "dir") {
+                    list.innerHTML += `
+                    <div class="feature-card" onclick="runFeature('${item.name}')">
+                        <div class="feature-icon"><i class="fas fa-bolt"></i></div>
+                        <h3>${item.name}</h3>
+                    </div>`;
+                }
+            });
+            if (!list.innerHTML) list.innerHTML =
+                "<p style='grid-column:1/-1;text-align:center;'>No features installed.</p>";
         });
 }
 
+// 🔥 FINAL VERSION — FULL SUPPORT (write + upload)
+function createFeaturePrompt() {
+    const name = prompt("Feature Name:");
+    if (!name) return;
+
+    requireSecurity(() => {
+        const path = `features/${name}/index.html`;
+        const method = prompt("Select:\n1 = Write HTML manually\n2 = Upload HTML file");
+        if (!method) return;
+
+        // Option 1: manual HTML writing
+        if (method.trim() === "1") {
+            openEditor(path, "", null);
+            return;
+        }
+
+        // Option 2: upload html file
+        if (method.trim() === "2") {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = ".html,text/html";
+            input.onchange = e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                startUpload(1);
+                const r = new FileReader();
+                r.onload = x => {
+                    uploadToRepo(path, x.target.result.split(",")[1], null, {
+                        onDone: () => {
+                            stepUpload();
+                            if (document.getElementById("feat-section").style.display === "block") loadFeatures();
+                        }
+                    });
+                };
+                r.readAsDataURL(file);
+            };
+            input.click();
+            return;
+        }
+
+        alert("Invalid choice. Enter 1 or 2.");
+    });
+}
+
+// ---------- RUN FEATURE ----------
+function runFeature(name) {
+    document.getElementById("feature-viewer").style.display = "flex";
+    document.getElementById("feat-title").innerText = name;
+    fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
+        .then(r => r.json()).then(d => {
+            document.getElementById("app-frame").srcdoc = safeDecodeBase64(d.content || "");
+        });
+}
 function closeFeature() {
     document.getElementById("feature-viewer").style.display = "none";
     document.getElementById("app-frame").srcdoc = "";
