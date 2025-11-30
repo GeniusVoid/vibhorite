@@ -104,7 +104,8 @@ function getWebPass() {
         });
 }
 
-// secondary security password (8-digit dynamic code)
+// secondary security password (6-digit dynamic code)
+// format: first2(webpass) + HH(24h) + last2(hidepass)
 async function verifyOperationPassword() {
     const [webPass, hidePass] = await Promise.all([getWebPass(), getHidePass()]);
     const first2 = (webPass || "").slice(0, 2);
@@ -116,12 +117,10 @@ async function verifyOperationPassword() {
     }
 
     const now = new Date();
-    let h = now.getHours() % 12;
-    if (h === 0) h = 12; // 12-hour format
-    const hh = String(h).padStart(2, "0");
-    const mm = String(now.getMinutes()).padStart(2, "0");
+    const hour = String(now.getHours()).padStart(2, "0"); // 24-hour format (00–23)
 
-    const code = first2 + hh + mm + last2;
+    // 6-digit code (first2 + hour + last2)
+    const code = first2 + hour + last2;
 
     const input = prompt("Enter security code:");
     if (input === null) return false;
