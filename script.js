@@ -31,18 +31,26 @@ function startUpload(totalFiles) {
     uploadInProgress = true;
     uploadTotal = totalFiles;
     uploadDone = 0;
-    document.getElementById("upload-status").style.display = "flex";
-    document.getElementById("upload-progress-fill").style.width = "0%";
-    document.getElementById("upload-status-text").textContent =
-        totalFiles > 1 ? `Uploading ${totalFiles} files...` : "Uploading file...";
+    const status = document.getElementById("upload-status");
+    if (status) status.style.display = "flex";
+    const bar = document.getElementById("upload-progress-fill");
+    const text = document.getElementById("upload-status-text");
+    if (bar) bar.style.width = "0%";
+    if (text) {
+        text.textContent =
+            totalFiles > 1 ? `Uploading ${totalFiles} files...` : "Uploading file...";
+    }
 }
 function stepUpload() {
     uploadDone++;
     const percent = Math.round((uploadDone / uploadTotal) * 100);
-    document.getElementById("upload-progress-fill").style.width = percent + "%";
+    const bar = document.getElementById("upload-progress-fill");
+    if (bar) bar.style.width = percent + "%";
     if (percent === 100) {
-        document.getElementById("upload-status-text").textContent = "Upload complete";
-        setTimeout(() => { document.getElementById("upload-status").style.display = "none"; }, 700);
+        const text = document.getElementById("upload-status-text");
+        if (text) text.textContent = "Upload complete";
+        const status = document.getElementById("upload-status");
+        setTimeout(() => { if (status) status.style.display = "none"; }, 700);
     }
 }
 
@@ -138,9 +146,17 @@ function fetchPath(path) {
         '<p style="text-align:center;color:#666;margin-top:20px;">Loading...</p>';
 
     fetch(API_URL + cleanPath(path || ""), { headers: { "x-password": sessionPass } })
-        .then(r => r.json()).then(data => {
+        .then(r => r.json())
+        .then(data => {
             const list = document.getElementById("file-list");
             list.innerHTML = "";
+
+            // show backend error instead of blank
+            if (data && data.error) {
+                list.innerHTML =
+                    `<p style="text-align:center;color:red;margin-top:20px;">${data.error}</p>`;
+                return;
+            }
 
             if (path) {
                 const parent = path.split("/").slice(0, -1).join("/");
@@ -187,6 +203,10 @@ function fetchPath(path) {
                     <div class="item-actions">${actions}</div>
                 </div>`;
             });
+        })
+        .catch(() => {
+            document.getElementById("file-list").innerHTML =
+                `<p style="text-align:center;color:red;margin-top:20px;">Connection Error</p>`;
         });
 }
 
@@ -249,7 +269,9 @@ function downloadItem(path, name) {
             const a = document.createElement("a");
             a.href = url;
             a.download = name || path.split("/").pop();
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
         });
 }
@@ -357,6 +379,13 @@ function loadFeatures() {
         .then(r => r.json()).then(data => {
             const list = document.getElementById("feature-list");
             list.innerHTML = "";
+
+            if (data && data.error) {
+                list.innerHTML =
+                    "<p style='grid-column:1/-1;text-align:center;color:red;'>Error loading features</p>";
+                return;
+            }
+
             (data || []).forEach(item => {
                 if (item.type === "dir") {
                     list.innerHTML += `
