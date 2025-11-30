@@ -8,7 +8,6 @@ let editingPath = "";
 // private-space state
 let privateUnlocked = false;
 let hidePassCache = null;
-let webPassCache = null;
 
 // upload progress state
 let uploadInProgress = false;
@@ -47,42 +46,41 @@ function stepUpload() {
     }
 }
 
-// ---------- LOAD PASSWORD FILES ----------
+// ---------- LOAD HIDE PASS ----------
 function getHidePass() {
     if (hidePassCache !== null) return Promise.resolve(hidePassCache);
     return fetch(API_URL + "/hidepass.txt", { headers: { "x-password": sessionPass } })
-        .then(r => r.json()).then(d => {
+        .then(r => r.json())
+        .then(d => {
             hidePassCache = d && d.content ? safeDecodeBase64(d.content).trim() : "";
             return hidePassCache;
-        }).catch(() => "");
-}
-function getWebPass() {
-    if (webPassCache !== null) return Promise.resolve(webPassCache);
-    return fetch(API_URL + "/webpass.txt", { headers: { "x-password": sessionPass } })
-        .then(r => r.json()).then(d => {
-            webPassCache = d && d.content ? safeDecodeBase64(d.content).trim() : "";
-            return webPassCache;
-        }).catch(() => "");
+        })
+        .catch(() => "");
 }
 
-// ---------- SECONDARY SECURITY (6-digit) ----------
-async function verifyOperationPassword() {
-    const [webPass, hidePass] = await Promise.all([getWebPass(), getHidePass()]);
-    const first2 = webPass.slice(0, 2);
-    const last2 = hidePass.slice(-2);
-    const hour = String(new Date().getHours()).padStart(2, "0"); // 24-hour
-
-    const code = first2 + hour + last2;
-    const input = prompt("Enter security code:");
-    return input && input.trim() === code;
-}
+// ---------- OPERATION SECURITY (use hidepass.txt directly) ----------
 function requireSecurity(action) {
-    verifyOperationPassword().then(ok => { if (ok) action(); else alert("Wrong security code."); });
+    getHidePass().then(realPass => {
+        if (!realPass) {
+            alert("Operation password (hidepass.txt) is not set.");
+            return;
+        }
+        const input = prompt("Enter operation password:");
+        if (input && input.trim() === realPass) {
+            action();
+        } else {
+            alert("Wrong password.");
+        }
+    });
 }
 
-// ---------- PRIVATE FOLDER ----------
+// ---------- PRIVATE FOLDER (also uses hidePass) ----------
 function promptPrivate(path) {
     getHidePass().then(real => {
+        if (!real) {
+            alert("Private password not set.");
+            return;
+        }
         const input = prompt("Enter private folder password:");
         if (input && input.trim() === real) {
             privateUnlocked = true;
@@ -109,6 +107,9 @@ function attemptLogin() {
                 sessionPass = pass;
                 document.getElementById("login-overlay").style.display = "none";
                 document.getElementById("app-container").style.display = "flex";
+                currentPath = "";
+                privateUnlocked = false;
+                hidePassCache = null;
                 fetchPath("");
             } else {
                 msg.innerText = "Wrong Password";
@@ -146,7 +147,7 @@ function fetchPath(path) {
     document.getElementById("file-list").innerHTML =
         '<p style="text-align:center;color:#666;margin-top:20px;">Loading...</p>';
 
-    fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
+    fetch(API_URL + cleanPath(path || ""), { headers: { "x-password": sessionPass } })
         .then(r => r.json()).then(data => {
             const list = document.getElementById("file-list");
             list.innerHTML = "";
@@ -159,9 +160,18 @@ function fetchPath(path) {
                 </div>`;
             }
 
-            if (!Array.isArray(data)) return;
+            if (!Array.isArray(data)) {
+                if (data && data.content) {
+                    fetchFile(path);
+                }
+                return;
+            }
 
             data.sort((a, b) => a.type === b.type ? 0 : a.type === "dir" ? -1 : 1);
+
+            if (!data.length) {
+                list.innerHTML = '<p style="text-align:center;color:#444;margin-top:10px;">Empty</p>';
+            }
 
             data.forEach(item => {
                 const isPrivateRoot = item.name === "private" && !path;
@@ -175,8 +185,9 @@ function fetchPath(path) {
 
                 let actions = "";
                 if (!item.name.includes("webpass.txt") && !item.name.includes("hidepass.txt")) {
-                    if (item.type !== "dir")
+                    if (item.type !== "dir") {
                         actions += `<i class="fas fa-download" onclick="event.stopPropagation(); secureDownload('${item.path}','${item.name}')"></i>`;
+                    }
                     actions += `<i class="fas fa-trash" onclick="event.stopPropagation(); secureDelete('${item.path}','${item.sha}')"></i>`;
                 }
 
@@ -193,7 +204,10 @@ function fetchPath(path) {
 function fetchFile(path) {
     if (path.includes("webpass.txt") || path.includes("hidepass.txt")) return location.reload();
     fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
-        .then(r => r.json()).then(d => openEditor(path, safeDecodeBase64(d.content || ""), d.sha));
+        .then(r => r.json()).then(d => {
+            if (!d || !d.content) return;
+            openEditor(path, safeDecodeBase64(d.content), d.sha);
+        });
 }
 function openEditor(path, content, sha) {
     editingPath = path;
@@ -207,16 +221,23 @@ function closeEditor() {
     document.getElementById("code-editor").value = "";
 }
 function saveFile() {
+    if (!editingPath) return alert("No file selected.");
     requireSecurity(() => {
         startUpload(1);
-        uploadToRepo(editingPath, safeEncodeBase64(document.getElementById("code-editor").value), currentSha, {
-            onDone: stepUpload
-        });
+        uploadToRepo(
+            editingPath,
+            safeEncodeBase64(document.getElementById("code-editor").value),
+            currentSha,
+            { onDone: stepUpload }
+        );
     });
 }
 
 // ---------- UPLOAD / DELETE / DOWNLOAD ----------
-function secureDelete(path, sha) { if (confirm("Delete?")) requireSecurity(() => deleteItem(path, sha)); }
+function secureDelete(path, sha) {
+    if (!confirm("Delete this?")) return;
+    requireSecurity(() => deleteItem(path, sha));
+}
 function deleteItem(path, sha) {
     fetch(API_URL + cleanPath(path), {
         method: "DELETE",
@@ -224,16 +245,25 @@ function deleteItem(path, sha) {
         body: JSON.stringify({ sha })
     }).then(() => fetchPath(currentPath));
 }
-function secureDownload(path, name) { requireSecurity(() => downloadItem(path, name)); }
+
+function secureDownload(path, name) {
+    requireSecurity(() => downloadItem(path, name));
+}
 function downloadItem(path, name) {
+    if (path.includes("webpass.txt") || path.includes("hidepass.txt")) return;
     fetch(API_URL + cleanPath(path), { headers: { "x-password": sessionPass } })
         .then(r => r.json()).then(d => {
-            const u8 = Uint8Array.from(atob(d.content), c => c.charCodeAt(0));
-            const url = URL.createObjectURL(new Blob([u8]));
-            const a = Object.assign(document.createElement("a"), { href: url, download: name });
-            a.click(); URL.revokeObjectURL(url);
+            if (!d || !d.content) return;
+            const bytes = Uint8Array.from(atob(d.content), c => c.charCodeAt(0));
+            const url = URL.createObjectURL(new Blob([bytes]));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = name || path.split("/").pop();
+            a.click();
+            URL.revokeObjectURL(url);
         });
 }
+
 function uploadToRepo(path, base64, sha, opt = {}) {
     fetch(API_URL + cleanPath(path), {
         method: "PUT",
@@ -241,8 +271,14 @@ function uploadToRepo(path, base64, sha, opt = {}) {
         body: JSON.stringify({ content: base64, sha })
     }).then(() => {
         if (opt.onDone) opt.onDone();
-        if (opt.closeEditor !== false && document.getElementById("editor-modal").style.display === "flex") closeEditor();
+        if (opt.closeEditor !== false &&
+            document.getElementById("editor-modal").style.display === "flex") {
+            closeEditor();
+        }
         if (opt.refresh !== false) fetchPath(currentPath);
+    }).catch(() => {
+        alert("Upload error.");
+        if (opt.onDone) opt.onDone();
     });
 }
 
@@ -250,12 +286,17 @@ function uploadToRepo(path, base64, sha, opt = {}) {
 function handleFileUpload(input) {
     const file = input.files[0];
     input.value = "";
+    if (!file) return;
     requireSecurity(() => {
         startUpload(1);
         const r = new FileReader();
         r.onload = e => {
-            uploadToRepo(currentPath ? `${currentPath}/${file.name}` : file.name,
-                e.target.result.split(",")[1], null, { onDone: stepUpload });
+            uploadToRepo(
+                currentPath ? `${currentPath}/${file.name}` : file.name,
+                e.target.result.split(",")[1],
+                null,
+                { onDone: stepUpload }
+            );
         };
         r.readAsDataURL(file);
     });
@@ -265,6 +306,7 @@ function handleFileUpload(input) {
 function handleFolderUpload(input) {
     const files = [...input.files];
     input.value = "";
+    if (!files.length) return;
     requireSecurity(() => {
         startUpload(files.length);
         let left = files.length;
@@ -272,7 +314,8 @@ function handleFolderUpload(input) {
             const r = new FileReader();
             r.onload = e => {
                 const rel = f.webkitRelativePath || f.name;
-                uploadToRepo(currentPath ? `${currentPath}/${rel}` : rel, e.target.result.split(",")[1], null, {
+                const path = currentPath ? `${currentPath}/${rel}` : rel;
+                uploadToRepo(path, e.target.result.split(",")[1], null, {
                     refresh: false,
                     onDone: () => {
                         stepUpload();
@@ -290,12 +333,31 @@ function handleFolderUpload(input) {
 function createFolderPrompt() {
     const name = prompt("Folder Name:");
     if (!name) return;
-    requireSecurity(() => uploadToRepo(currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`, safeEncodeBase64("placeholder")));
+    requireSecurity(() => {
+        const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
+        uploadToRepo(path, safeEncodeBase64("placeholder"));
+    });
 }
 function createFilePrompt() {
     const name = prompt("New File Name:");
     if (!name) return;
     const path = currentPath ? `${currentPath}/${name}` : name;
+    requireSecurity(() => openEditor(path, "", null));
+}
+
+// Manual full-path file creation
+function createFileWithPathPrompt() {
+    let fullPath = prompt("New File Full Path (e.g. folder/sub/file.txt):");
+    if (!fullPath) return;
+    fullPath = fullPath.trim();
+    if (!fullPath) return;
+
+    if (!fullPath.startsWith("/") && currentPath) {
+        fullPath = currentPath + "/" + fullPath;
+    }
+    if (fullPath.startsWith("/")) fullPath = fullPath.slice(1);
+
+    const path = fullPath;
     requireSecurity(() => openEditor(path, "", null));
 }
 
@@ -319,7 +381,7 @@ function loadFeatures() {
         });
 }
 
-// 🔥 FINAL VERSION — FULL SUPPORT (write + upload)
+// create feature: choose write or upload HTML
 function createFeaturePrompt() {
     const name = prompt("Feature Name:");
     if (!name) return;
@@ -329,13 +391,11 @@ function createFeaturePrompt() {
         const method = prompt("Select:\n1 = Write HTML manually\n2 = Upload HTML file");
         if (!method) return;
 
-        // Option 1: manual HTML writing
         if (method.trim() === "1") {
             openEditor(path, "", null);
             return;
         }
 
-        // Option 2: upload html file
         if (method.trim() === "2") {
             const input = document.createElement("input");
             input.type = "file";
@@ -349,7 +409,9 @@ function createFeaturePrompt() {
                     uploadToRepo(path, x.target.result.split(",")[1], null, {
                         onDone: () => {
                             stepUpload();
-                            if (document.getElementById("feat-section").style.display === "block") loadFeatures();
+                            if (document.getElementById("feat-section").style.display === "block") {
+                                loadFeatures();
+                            }
                         }
                     });
                 };
@@ -363,13 +425,17 @@ function createFeaturePrompt() {
     });
 }
 
-// ---------- RUN FEATURE ----------
 function runFeature(name) {
     document.getElementById("feature-viewer").style.display = "flex";
     document.getElementById("feat-title").innerText = name;
     fetch(API_URL + `/features/${name}/index.html`, { headers: { "x-password": sessionPass } })
         .then(r => r.json()).then(d => {
-            document.getElementById("app-frame").srcdoc = safeDecodeBase64(d.content || "");
+            if (d && d.content) {
+                document.getElementById("app-frame").srcdoc = safeDecodeBase64(d.content);
+            } else {
+                document.getElementById("app-frame").srcdoc =
+                    "<p style='padding:10px;font-family:monospace;'>Feature not found.</p>";
+            }
         });
 }
 function closeFeature() {
